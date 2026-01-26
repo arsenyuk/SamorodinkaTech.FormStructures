@@ -1,0 +1,72 @@
+@page "/forms/{formNumber}/data"
+@model SamorodinkaTech.FormStructures.Web.Pages.Forms.DataModel
+@{
+    ViewData["Title"] = $"Uploads #{Model.FormNumber}";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        <h1 class="h4 mb-0">Uploads</h1>
+        <div class="text-muted"><small>#@Model.FormNumber · Latest schema: <code>v@(Model.LatestStructure!.Version)</code></small></div>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/aggregated">Aggregated data</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Schema</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/">Back</a>
+    </div>
+</div>
+
+<hr />
+
+@if (Model.Uploads.Count == 0)
+{
+    <div class="alert alert-warning">
+        No uploaded data found for this form yet.
+        Upload a filled file on the schema page.
+    </div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+            <thead>
+            <tr>
+                <th>Uploaded (UTC)</th>
+                <th class="text-end">Schema</th>
+                <th class="text-end">Rows</th>
+                <th>File</th>
+                <th class="text-end"></th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var u in Model.Uploads)
+            {
+                var detailsHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{u.FormVersion}/{Uri.EscapeDataString(u.UploadId)}";
+                var fileHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{u.FormVersion}/{Uri.EscapeDataString(u.UploadId)}/file";
+                var versionHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/v{u.FormVersion}";
+
+                <tr class="js-row-link" data-href="@detailsHref" style="cursor: pointer;">
+                    <td><code>@u.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                    <td class="text-end"><a href="@versionHref"><code>v@(u.FormVersion)</code></a></td>
+                    <td class="text-end"><code>@u.RowCount</code></td>
+                    <td><a href="@fileHref">@u.OriginalFileName</a></td>
+                    <td class="text-end">
+                        <div class="d-flex gap-2 justify-content-end">
+                            <a class="btn btn-outline-primary btn-sm" href="@detailsHref">Details</a>
+                            <a class="btn btn-outline-secondary btn-sm" href="@fileHref">File</a>
+                            <form method="post"
+                                  asp-page-handler="Delete"
+                                  asp-route-formNumber="@Model.FormNumber"
+                                  asp-route-version="@u.FormVersion"
+                                  asp-route-uploadId="@u.UploadId"
+                                  onsubmit="return confirm('Delete this upload and all its stored data?');">
+                                <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+                            </form>
+                        </div>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}

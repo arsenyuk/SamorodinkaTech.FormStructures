@@ -1,0 +1,118 @@
+@page "/settings/forms"
+@model SamorodinkaTech.FormStructures.Web.Pages.Settings.FormsModel
+@{
+    ViewData["Title"] = "Settings · Forms";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        <h1 class="h3 mb-0">Settings</h1>
+        <div class="text-muted">Upload and configure form schemas.</div>
+    </div>
+</div>
+
+<hr />
+
+@if (TempData["UploadMessage"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+
+<div class="card">
+    <div class="card-body">
+        <h2 class="h6">Upload empty template</h2>
+        <form method="post" enctype="multipart/form-data">
+            <div class="mb-3">
+                <label class="form-label" for="Upload">Excel file (.xlsx)</label>
+                <input class="form-control" type="file" asp-for="Upload" accept=".xlsx" />
+                <div class="form-text">Row 1: form number. Row 2: form title. Row 3+: header.</div>
+                <span class="text-danger" asp-validation-for="Upload"></span>
+            </div>
+
+            <div class="text-danger" asp-validation-summary="All"></div>
+
+            <button class="btn btn-primary" type="submit">Upload & Analyze</button>
+        </form>
+    </div>
+</div>
+
+<hr />
+
+<h2 class="h5">Forms</h2>
+
+@if (Model.Forms.Count == 0)
+{
+    <div class="alert alert-warning">No forms stored yet.</div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm table-striped align-middle">
+            <thead>
+            <tr>
+                <th>Form</th>
+                <th class="text-end">Latest schema</th>
+                <th>Schema uploaded (UTC)</th>
+                <th>Last data file</th>
+                <th>Data uploaded (UTC)</th>
+                <th class="text-end"></th>
+            </tr>
+            </thead>
+            <tbody>
+            @foreach (var f in Model.Forms)
+            {
+                var uploadsHref = $"/forms/{Uri.EscapeDataString(f.FormNumber)}/data";
+                var href = $"/forms/{Uri.EscapeDataString(f.FormNumber)}/data/aggregated";
+                <tr class="js-row-link" data-href="@href" style="cursor: pointer;">
+                    <td>
+                        <div><a href="@href">@f.DisplayFormTitle</a></div>
+                        <div class="text-muted"><small>#@f.DisplayFormNumber</small></div>
+                    </td>
+                    <td class="text-end"><code>v@(f.LatestVersion)</code></td>
+                    <td><code>@f.LatestUploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                    <td>
+                        @if (f.LastDataUpload is null)
+                        {
+                            <span class="text-muted">—</span>
+                        }
+                        else
+                        {
+                            var uploadHref = $"/forms/{Uri.EscapeDataString(f.FormNumber)}/data/v{f.LastDataUpload.FormVersion}/{Uri.EscapeDataString(f.LastDataUpload.UploadId)}";
+                            var versionHref = $"/forms/{Uri.EscapeDataString(f.FormNumber)}/v{f.LastDataUpload.FormVersion}";
+                            <div>
+                                <a href="@uploadHref"><small>@f.LastDataUpload.OriginalFileName</small></a>
+                            </div>
+                            <div class="text-muted">
+                                <small>
+                                    <a href="@versionHref"><code>v@(f.LastDataUpload.FormVersion)</code></a>
+                                </small>
+                            </div>
+                        }
+                    </td>
+                    <td>
+                        @if (f.LastDataUpload is null)
+                        {
+                            <span class="text-muted">—</span>
+                        }
+                        else
+                        {
+                            <code>@f.LastDataUpload.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code>
+                        }
+                    </td>
+                    <td class="text-end">
+                        <div class="d-flex gap-2 justify-content-end">
+                            <a class="btn btn-outline-primary btn-sm" href="/forms/@Uri.EscapeDataString(f.FormNumber)">Schema</a>
+                            <a class="btn btn-outline-secondary btn-sm" href="@uploadsHref">Uploads</a>
+                            <a class="btn btn-outline-secondary btn-sm" href="@href">Data</a>
+                        </div>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

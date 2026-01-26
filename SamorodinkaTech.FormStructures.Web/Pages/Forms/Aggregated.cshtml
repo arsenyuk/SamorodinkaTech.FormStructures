@@ -1,0 +1,445 @@
+@page "/forms/{formNumber}/data/aggregated"
+@using Microsoft.AspNetCore.Html
+@using Microsoft.AspNetCore.Mvc.Rendering
+@model SamorodinkaTech.FormStructures.Web.Pages.Forms.AggregatedModel
+@{
+    var formTitle = Model.Structure?.FormTitle;
+    var visiblePaths = Model.VisibleColumns.Select(c => c.Path).ToHashSet(StringComparer.Ordinal);
+    ViewData["Title"] = string.IsNullOrWhiteSpace(formTitle)
+        ? "Aggregated data"
+    : $"{formTitle} · Aggregated data";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        @if (string.IsNullOrWhiteSpace(formTitle))
+        {
+            <h1 class="h4 mb-0">Aggregated data</h1>
+            <div class="text-muted"><small>@Model.UploadCount upload(s)</small></div>
+        }
+        else
+        {
+            <h1 class="h4 mb-0">@formTitle</h1>
+            <div class="h6 mb-0 mt-1">Aggregated data</div>
+            <div class="text-muted"><small>@Model.UploadCount upload(s)</small></div>
+        }
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-primary btn-sm" href="?handler=Xlsx&version=@Model.Version&sort=@Uri.EscapeDataString(Model.SortKey)&dir=@Uri.EscapeDataString(Model.SortDir)@Model.SelectedColsQuery">Download .xlsx</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">Uploads</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Schema</a>
+    </div>
+</div>
+
+<hr />
+
+@if (TempData["UploadMessage"] is string uploadMsg)
+{
+    <div class="alert alert-success">@uploadMsg</div>
+}
+
+@if (Model.Structure is null)
+{
+    <div class="alert alert-warning">Form schema not found.</div>
+}
+else
+{
+    <div class="card mb-3">
+        <div class="card-body">
+            <h2 class="h6">Upload data</h2>
+            <form method="post" enctype="multipart/form-data" asp-page-handler="UploadData">
+                <input type="hidden" name="formNumber" value="@Model.FormNumber" />
+                <input type="hidden" name="version" value="@Model.Version" />
+                <input type="hidden" name="sort" value="@Model.SortKey" />
+                <input type="hidden" name="dir" value="@Model.SortDir" />
+                @foreach (var c in Model.SelectedCols)
+                {
+                    <input type="hidden" name="cols" value="@c" />
+                }
+
+                <div class="mb-3">
+                    <label class="form-label" for="DataUpload">Filled Excel file (.xlsx)</label>
+                    <input class="form-control" type="file" asp-for="DataUpload" accept=".xlsx" />
+                    <div class="form-text">File schema must match one of the stored versions.</div>
+                    <span class="text-danger" asp-validation-for="DataUpload"></span>
+                </div>
+
+                <div class="text-danger" asp-validation-summary="All"></div>
+
+                <button class="btn btn-primary btn-sm" type="submit">Upload &amp; Save Data</button>
+            </form>
+        </div>
+    </div>
+
+    if (Model.Rows.Count == 0)
+    {
+        <div class="alert alert-warning">No data uploaded for this schema version yet.</div>
+        return;
+    }
+
+    <div class="position-relative">
+        <div class="collapse position-absolute end-0 top-0 mt-2 me-2 shadow" id="columnSettingsPanel" style="z-index: 2000; width: min(900px, 90vw);">
+            <form method="get" class="border rounded p-3 bg-light" style="max-height: 70vh; overflow: auto;">
+                <input type="hidden" name="version" value="@Model.Version" />
+                <input type="hidden" name="sort" value="@Model.SortKey" />
+                <input type="hidden" name="dir" value="@Model.SortDir" />
+
+                <div class="mb-2"><strong>Technical</strong></div>
+                <div class="d-flex flex-wrap gap-3 mb-3">
+                    <label class="form-check">
+                        <input class="form-check-input" type="checkbox" name="cols" value="uploaded" checked="@(Model.ShowUploadedColumn ? "checked" : null)" />
+                        <span class="form-check-label">Uploaded (UTC)</span>
+                    </label>
+                    <label class="form-check">
+                        <input class="form-check-input" type="checkbox" name="cols" value="file" checked="@(Model.ShowFileColumn ? "checked" : null)" />
+                        <span class="form-check-label">File</span>
+                    </label>
+                    <label class="form-check">
+                        <input class="form-check-input" type="checkbox" name="cols" value="uploadId" checked="@(Model.ShowUploadIdColumn ? "checked" : null)" />
+                        <span class="form-check-label">UploadId</span>
+                    </label>
+                </div>
+
+                <div class="mb-2"><strong>Data</strong></div>
+                <div class="row g-2">
+                    @foreach (var col in Model.Structure.Columns)
+                    {
+                        var token = $"c{col.Index}";
+                        var isChecked = visiblePaths.Contains(col.Path);
+
+                        <div class="col-12 col-md-6 col-lg-4">
+                            <label class="form-check">
+                                <input class="form-check-input" type="checkbox" name="cols" value="@token" checked="@(isChecked ? "checked" : null)" />
+                                <span class="form-check-label">@col.Name</span>
+                            </label>
+                        </div>
+                    }
+                </div>
+
+                <div class="mt-3 d-flex gap-2 justify-content-end">
+                    <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+                </div>
+            </form>
+        </div>
+
+        <div class="table-responsive">
+        <table class="table table-sm table-striped table-bordered align-middle">
+            <thead>
+            @RenderHeader(
+                Model.Structure,
+                Model.SortKey,
+                Model.SortDir,
+                Model.Version,
+                Model.SelectedCols,
+                Model.ShowUploadedColumn,
+                Model.ShowFileColumn,
+                Model.ShowUploadIdColumn,
+                Model.VisibleColumns)
+            </thead>
+            <tbody>
+            @foreach (var r in Model.Rows)
+            {
+                var uploadHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{r.FormVersion}/{Uri.EscapeDataString(r.UploadId)}";
+                var fileHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{r.FormVersion}/{Uri.EscapeDataString(r.UploadId)}/file";
+
+                <tr>
+                    @if (Model.ShowUploadedColumn)
+                    {
+                        <td><code>@r.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                    }
+                    @if (Model.ShowFileColumn)
+                    {
+                        <td>
+                            <div><a href="@fileHref">@r.OriginalFileName</a></div>
+                            @if (!Model.ShowUploadIdColumn)
+                            {
+                                <div class="text-muted"><small><code>@r.UploadId</code></small></div>
+                            }
+                        </td>
+                    }
+                    @if (Model.ShowUploadIdColumn)
+                    {
+                        <td><code>@r.UploadId</code></td>
+                    }
+                    @foreach (var col in Model.VisibleColumns)
+                    {
+                        r.Values.TryGetValue(col.Path, out var v);
+                        <td>@v</td>
+                    }
+                    <td class="text-end">
+                        <div class="d-flex gap-2 justify-content-end">
+                            <a class="btn btn-outline-secondary btn-sm" href="@uploadHref">Data</a>
+                            <a class="btn btn-outline-secondary btn-sm" href="@fileHref">File</a>
+                        </div>
+                    </td>
+                </tr>
+            }
+            </tbody>
+        </table>
+        </div>
+    </div>
+}
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
+
+@functions {
+    private static string ToggleDir(string currentDir) =>
+        string.Equals(currentDir, "desc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc";
+
+    private static IHtmlContent RenderHeader(
+        SamorodinkaTech.FormStructures.Web.Models.FormStructure structure,
+        string currentSort,
+        string currentDir,
+        int version,
+        IReadOnlyList<string> selectedCols,
+        bool showUploaded,
+        bool showFile,
+        bool showUploadId,
+        IReadOnlyList<SamorodinkaTech.FormStructures.Web.Models.ColumnDefinition> visibleColumns)
+    {
+        var allNodes = new List<SamorodinkaTech.FormStructures.Web.Models.HeaderNode>();
+
+        void Walk(SamorodinkaTech.FormStructures.Web.Models.HeaderNode node)
+        {
+            allNodes.Add(node);
+            foreach (var child in node.Children)
+            {
+                Walk(child);
+            }
+        }
+
+        foreach (var root in structure.Header.OrderBy(n => n.ColStart).ThenBy(n => n.RowStart))
+        {
+            Walk(root);
+        }
+
+        var colsQuery = selectedCols.Count == 0
+            ? string.Empty
+            : string.Concat(selectedCols.Select(c => $"&cols={Uri.EscapeDataString(c)}"));
+
+        var hasHeader = allNodes.Count > 0;
+        var minRow = hasHeader ? allNodes.Min(n => n.RowStart) : 1;
+        var maxRow = hasHeader ? allNodes.Max(n => n.RowEnd) : 1;
+
+        var leaves = hasHeader
+            ? allNodes
+                .Where(n => n.Children.Count == 0)
+                .OrderBy(n => n.ColStart)
+                .ToArray()
+            : Array.Empty<SamorodinkaTech.FormStructures.Web.Models.HeaderNode>();
+
+        var leafIndexByColStart = new Dictionary<int, int>();
+        for (var i = 0; i < leaves.Length; i++)
+        {
+            leafIndexByColStart[leaves[i].ColStart] = i + 1; // 1-based
+        }
+
+        var visiblePaths = visibleColumns
+            .Select(c => c.Path)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var visibleLeafColStarts = new HashSet<int>();
+        if (hasHeader && leaves.Length == structure.Columns.Count)
+        {
+            foreach (var c in visibleColumns)
+            {
+                var idx = c.Index - 1;
+                if (idx >= 0 && idx < leaves.Length)
+                {
+                    visibleLeafColStarts.Add(leaves[idx].ColStart);
+                }
+            }
+        }
+
+        var header = new HtmlContentBuilder();
+
+        void AppendColumnSettings(TagBuilder thActions)
+        {
+            var tools = new TagBuilder("div");
+            tools.AddCssClass("d-flex");
+            tools.AddCssClass("gap-2");
+            tools.AddCssClass("justify-content-end");
+
+            var btnCols = new TagBuilder("button");
+            btnCols.AddCssClass("btn");
+            btnCols.AddCssClass("btn-outline-secondary");
+            btnCols.AddCssClass("btn-sm");
+            btnCols.Attributes["type"] = "button";
+            btnCols.Attributes["data-bs-toggle"] = "collapse";
+            btnCols.Attributes["data-bs-target"] = "#columnSettingsPanel";
+            btnCols.Attributes["aria-expanded"] = "false";
+            btnCols.Attributes["aria-controls"] = "columnSettingsPanel";
+            btnCols.InnerHtml.Append("Columns");
+            tools.InnerHtml.AppendHtml(btnCols);
+
+            var aReset = new TagBuilder("a");
+            aReset.AddCssClass("btn");
+            aReset.AddCssClass("btn-link");
+            aReset.AddCssClass("btn-sm");
+            aReset.Attributes["href"] = $"?version={version}&sort={Uri.EscapeDataString(currentSort)}&dir={Uri.EscapeDataString(currentDir)}";
+            aReset.InnerHtml.Append("Reset");
+            tools.InnerHtml.AppendHtml(aReset);
+
+            thActions.InnerHtml.AppendHtml(tools);
+        }
+
+        if (!hasHeader || (hasHeader && leaves.Length != structure.Columns.Count))
+        {
+            var tr = new TagBuilder("tr");
+            var rowspanText = (maxRow - minRow + 1).ToString();
+
+            if (showUploaded)
+            {
+                var th = new TagBuilder("th");
+                th.Attributes["rowspan"] = rowspanText;
+                th.InnerHtml.Append("Uploaded (UTC)");
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            if (showFile)
+            {
+                var th = new TagBuilder("th");
+                th.Attributes["rowspan"] = rowspanText;
+                th.InnerHtml.Append("File");
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            if (showUploadId)
+            {
+                var th = new TagBuilder("th");
+                th.Attributes["rowspan"] = rowspanText;
+                th.InnerHtml.Append("UploadId");
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            foreach (var col in visibleColumns)
+            {
+                var sortKey = $"c{col.Index}";
+                var nextDir = string.Equals(currentSort, sortKey, StringComparison.OrdinalIgnoreCase)
+                    ? ToggleDir(currentDir)
+                    : "asc";
+
+                var th = new TagBuilder("th");
+                var a = new TagBuilder("a");
+                a.Attributes["href"] = $"?version={version}&sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}{colsQuery}";
+                a.InnerHtml.Append(col.Name);
+                th.InnerHtml.AppendHtml(a);
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            var thActions = new TagBuilder("th");
+            thActions.Attributes["rowspan"] = rowspanText;
+            thActions.AddCssClass("text-end");
+            AppendColumnSettings(thActions);
+            tr.InnerHtml.AppendHtml(thActions);
+
+            header.AppendHtml(tr);
+            return header;
+        }
+
+        for (var r = minRow; r <= maxRow; r++)
+        {
+            var tr = new TagBuilder("tr");
+
+            if (r == minRow)
+            {
+                var rowspanText = (maxRow - minRow + 1).ToString();
+
+                if (showUploaded)
+                {
+                    var th = new TagBuilder("th");
+                    th.Attributes["rowspan"] = rowspanText;
+                    th.InnerHtml.Append("Uploaded (UTC)");
+                    tr.InnerHtml.AppendHtml(th);
+                }
+
+                if (showFile)
+                {
+                    var th = new TagBuilder("th");
+                    th.Attributes["rowspan"] = rowspanText;
+                    th.InnerHtml.Append("File");
+                    tr.InnerHtml.AppendHtml(th);
+                }
+
+                if (showUploadId)
+                {
+                    var th = new TagBuilder("th");
+                    th.Attributes["rowspan"] = rowspanText;
+                    th.InnerHtml.Append("UploadId");
+                    tr.InnerHtml.AppendHtml(th);
+                }
+            }
+
+            var rowCells = allNodes
+                .Where(n => n.RowStart == r)
+                .OrderBy(n => n.ColStart)
+                .ToArray();
+
+            foreach (var n in rowCells)
+            {
+                var visibleSpan = 0;
+                for (var col = n.ColStart; col <= n.ColEnd; col++)
+                {
+                    if (visibleLeafColStarts.Contains(col))
+                    {
+                        visibleSpan++;
+                    }
+                }
+
+                if (visibleSpan <= 0)
+                {
+                    continue;
+                }
+
+                var th = new TagBuilder("th");
+                var rowspan = n.RowEnd - n.RowStart + 1;
+
+                if (visibleSpan > 1)
+                {
+                    th.Attributes["colspan"] = visibleSpan.ToString();
+                }
+
+                if (rowspan > 1)
+                {
+                    th.Attributes["rowspan"] = rowspan.ToString();
+                }
+
+                if (n.Children.Count == 0 && leafIndexByColStart.TryGetValue(n.ColStart, out var leafIndex))
+                {
+                    var sortKey = $"c{leafIndex}";
+                    var nextDir = string.Equals(currentSort, sortKey, StringComparison.OrdinalIgnoreCase)
+                        ? ToggleDir(currentDir)
+                        : "asc";
+
+                    var a = new TagBuilder("a");
+                    a.Attributes["href"] = $"?version={version}&sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}{colsQuery}";
+                    a.InnerHtml.Append(n.Label);
+
+                    th.InnerHtml.AppendHtml(a);
+                }
+                else
+                {
+                    th.InnerHtml.Append(n.Label);
+                }
+
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            if (r == minRow)
+            {
+                var thActions = new TagBuilder("th");
+                thActions.Attributes["rowspan"] = (maxRow - minRow + 1).ToString();
+                thActions.AddCssClass("text-end");
+
+                AppendColumnSettings(thActions);
+                tr.InnerHtml.AppendHtml(thActions);
+            }
+
+            header.AppendHtml(tr);
+        }
+
+        return header;
+    }
+}

@@ -1,0 +1,75 @@
+@page "/forms/{formNumber}/data/v{version:int}/{uploadId}/file"
+@model SamorodinkaTech.FormStructures.Web.Pages.Forms.UploadFileModel
+@{
+    ViewData["Title"] = $"File #{Model.FormNumber} v{Model.Version}";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        <h1 class="h4 mb-0">Upload file</h1>
+        <div class="text-muted">
+            <small>
+                #@Model.FormNumber · <code>v@(Model.Version)</code> · <code>@Model.UploadId</code>
+            </small>
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/aggregated">Aggregated data</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">Uploads</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/v@(Model.Version)/@Uri.EscapeDataString(Model.UploadId)">Data</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Schema</a>
+    </div>
+</div>
+
+<hr />
+
+@if (Model.Meta is null)
+{
+    <div class="alert alert-warning">Upload not found.</div>
+}
+else
+{
+    var downloadHref = $"?handler=Download&formNumber={Uri.EscapeDataString(Model.FormNumber)}&version={Model.Version}&uploadId={Uri.EscapeDataString(Model.UploadId)}";
+    var jsonHref = $"?handler=DataJson&formNumber={Uri.EscapeDataString(Model.FormNumber)}&version={Model.Version}&uploadId={Uri.EscapeDataString(Model.UploadId)}";
+
+    <div class="card">
+        <div class="card-body">
+            <div class="d-flex justify-content-between align-items-center">
+                <div>
+                    <div class="text-muted"><small>File</small></div>
+                    <div>@Model.Meta.OriginalFileName</div>
+                    <div class="text-muted">
+                        <small>
+                            Uploaded (UTC): <code>@Model.Meta.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code> · Rows: <code>@Model.Meta.RowCount</code>
+                        </small>
+                    </div>
+                </div>
+                <div class="d-flex gap-2">
+                    <a class="btn btn-outline-primary btn-sm" href="@downloadHref">Download .xlsx</a>
+                    <a class="btn btn-outline-secondary btn-sm" href="@jsonHref" target="_blank">Open JSON</a>
+                    <form method="post"
+                          asp-page-handler="Delete"
+                          asp-route-formNumber="@Model.FormNumber"
+                          asp-route-version="@Model.Version"
+                          asp-route-uploadId="@Model.UploadId"
+                          onsubmit="return confirm('Delete this upload and all its stored data?');">
+                        <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+                    </form>
+                </div>
+            </div>
+
+            <hr />
+
+            <div class="row g-3">
+                <div class="col-md-6">
+                    <div class="text-muted"><small>SHA-256</small></div>
+                    <code>@Model.Meta.FileSha256</code>
+                </div>
+                <div class="col-md-6">
+                    <div class="text-muted"><small>Structure hash</small></div>
+                    <code>@Model.Meta.StructureHash</code>
+                </div>
+            </div>
+        </div>
+    </div>
+}

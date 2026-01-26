@@ -1,0 +1,162 @@
+@page "/forms/{formNumber}/data/v{version:int}/{uploadId}"
+@using Microsoft.AspNetCore.Html
+@using Microsoft.AspNetCore.Mvc.Rendering
+@model SamorodinkaTech.FormStructures.Web.Pages.Forms.DataUploadModel
+@{
+    ViewData["Title"] = $"Upload #{Model.FormNumber} v{Model.Version}";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        <h1 class="h4 mb-0">Upload details</h1>
+        <div class="text-muted">
+            <small>
+                #@Model.FormNumber · <a href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(Model.Version)"><code>v@(Model.Version)</code></a> ·
+                <code>@Model.UploadId</code>
+            </small>
+        </div>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/aggregated">Aggregated data</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">Back to uploads</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/v@(Model.Version)/@Uri.EscapeDataString(Model.UploadId)/file">File</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Schema</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/">Home</a>
+        <form method="post"
+              asp-page-handler="Delete"
+              asp-route-formNumber="@Model.FormNumber"
+              asp-route-version="@Model.Version"
+              asp-route-uploadId="@Model.UploadId"
+              onsubmit="return confirm('Delete this upload and all its stored data?');">
+            <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+        </form>
+    </div>
+</div>
+
+<hr />
+
+@if (Model.Data is null || Model.Structure is null)
+{
+    <div class="alert alert-warning">Upload not found.</div>
+}
+else
+{
+    <div class="table-responsive">
+        <table class="table table-sm table-striped table-bordered align-middle">
+            <thead>
+            @RenderHeader(Model.Structure, Model.SortKey, Model.SortDir)
+            </thead>
+            <tbody>
+            @foreach (var row in Model.Data.Rows)
+            {
+                <tr>
+                    @foreach (var col in Model.Structure.Columns)
+                    {
+                        row.Values.TryGetValue(col.Path, out var v);
+                        <td>@v</td>
+                    }
+                </tr>
+            }
+            </tbody>
+        </table>
+    </div>
+}
+
+@functions {
+    private static string ToggleDir(string currentDir) =>
+        string.Equals(currentDir, "desc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc";
+
+    private static IHtmlContent RenderHeader(
+        SamorodinkaTech.FormStructures.Web.Models.FormStructure structure,
+        string currentSort,
+        string currentDir)
+    {
+        var allNodes = new List<SamorodinkaTech.FormStructures.Web.Models.HeaderNode>();
+
+        void Walk(SamorodinkaTech.FormStructures.Web.Models.HeaderNode node)
+        {
+            allNodes.Add(node);
+            foreach (var child in node.Children)
+            {
+                Walk(child);
+            }
+        }
+
+        foreach (var root in structure.Header.OrderBy(n => n.ColStart).ThenBy(n => n.RowStart))
+        {
+            Walk(root);
+        }
+
+        var minRow = allNodes.Count == 0 ? 0 : allNodes.Min(n => n.RowStart);
+        var maxRow = allNodes.Count == 0 ? 0 : allNodes.Max(n => n.RowEnd);
+
+        var leaves = allNodes
+            .Where(n => n.Children.Count == 0)
+            .OrderBy(n => n.ColStart)
+            .ToArray();
+
+        var leafIndexByColStart = new Dictionary<int, int>();
+        for (var i = 0; i < leaves.Length; i++)
+        {
+            leafIndexByColStart[leaves[i].ColStart] = i + 1; // 1-based
+        }
+
+        var header = new HtmlContentBuilder();
+
+        for (var r = minRow; r <= maxRow; r++)
+        {
+            var tr = new TagBuilder("tr");
+
+            if (r == minRow)
+            {
+                // keep structure header aligned; no row numbering columns
+            }
+
+            var rowCells = allNodes
+                .Where(n => n.RowStart == r)
+                .OrderBy(n => n.ColStart)
+                .ToArray();
+
+            foreach (var n in rowCells)
+            {
+                var th = new TagBuilder("th");
+                var colspan = n.ColEnd - n.ColStart + 1;
+                var rowspan = n.RowEnd - n.RowStart + 1;
+
+                if (colspan > 1)
+                {
+                    th.Attributes["colspan"] = colspan.ToString();
+                }
+
+                if (rowspan > 1)
+                {
+                    th.Attributes["rowspan"] = rowspan.ToString();
+                }
+
+                if (n.Children.Count == 0 && leafIndexByColStart.TryGetValue(n.ColStart, out var leafIndex))
+                {
+                    var sortKey = $"c{leafIndex}";
+                    var nextDir = string.Equals(currentSort, sortKey, StringComparison.OrdinalIgnoreCase)
+                        ? ToggleDir(currentDir)
+                        : "asc";
+
+                    var a = new TagBuilder("a");
+                    a.Attributes["href"] = $"?sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}";
+                    a.InnerHtml.Append(n.Label);
+
+                    th.InnerHtml.AppendHtml(a);
+                }
+                else
+                {
+                    th.InnerHtml.Append(n.Label);
+                }
+
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            header.AppendHtml(tr);
+        }
+
+        return header;
+    }
+}

@@ -1,0 +1,263 @@
+@page "/forms/{formNumber}"
+@using Microsoft.AspNetCore.Html
+@using Microsoft.AspNetCore.Mvc.Rendering
+@model SamorodinkaTech.FormStructures.Web.Pages.Forms.DetailsModel
+@{
+    ViewData["Title"] = "Form";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        <h1 class="h4 mb-0">@Model.DisplayFormTitle</h1>
+        <div class="text-muted"><small>Form number: <code>@Model.DisplayFormNumber</code></small></div>
+        <div class="text-muted"><small>Index (URL): <code>@Model.FormNumber</code> (read-only)</small></div>
+        <div class="text-muted"><small>Latest: <code>v@(Model.Latest!.Version)</code> · Uploaded (UTC): <code>@Model.Latest!.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></small></div>
+    </div>
+    <div>
+        <div class="d-flex gap-2">
+            @if (!Model.EditMeta)
+            {
+                <a class="btn btn-outline-secondary btn-sm" href="?editMeta=true">Edit form info</a>
+            }
+            <a class="btn btn-outline-secondary btn-sm" href="/">Back</a>
+        </div>
+    </div>
+</div>
+
+<hr />
+
+@if (TempData["MetaMessage"] is string metaMsg)
+{
+    <div class="alert alert-success">@metaMsg</div>
+}
+
+@if (Model.EditMeta)
+{
+    <div class="card mb-3">
+        <div class="card-body">
+            <h2 class="h6">Form info</h2>
+            <form method="post" asp-page-handler="SaveMeta" asp-route-formNumber="@Model.FormNumber">
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <label class="form-label" for="DisplayFormNumberEdit">Form number (display)</label>
+                        <input class="form-control" asp-for="DisplayFormNumberEdit" />
+                        <span class="text-danger" asp-validation-for="DisplayFormNumberEdit"></span>
+                    </div>
+                    <div class="col-md-9">
+                        <label class="form-label" for="DisplayFormTitleEdit">Form title</label>
+                        <input class="form-control" asp-for="DisplayFormTitleEdit" />
+                        <span class="text-danger" asp-validation-for="DisplayFormTitleEdit"></span>
+                    </div>
+                </div>
+
+                <div class="form-text mt-2">Index (URL) is not editable: <code>@Model.FormNumber</code></div>
+
+                <div class="mt-3 d-flex justify-content-between">
+                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+}
+
+@if (TempData["UploadMessage"] is string msg)
+{
+    <div class="alert alert-success">@msg</div>
+}
+
+@if (TempData["DeleteMessage"] is string deleteMsg)
+{
+    <div class="alert alert-success">@deleteMsg</div>
+}
+
+<div class="row g-3">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h6">Upload new schema version</h2>
+                <form method="post" enctype="multipart/form-data" asp-page-handler="UploadSchema" asp-route-formNumber="@Model.FormNumber">
+                    <div class="mb-2">
+                        <input class="form-control" type="file" asp-for="SchemaUpload" accept=".xlsx" />
+                        <div class="form-text">Upload an empty template (.xlsx) to create a new schema version.</div>
+                        <div class="form-text">Note: the form number inside the Excel file may be different; the schema will still be saved under this index (URL): <code>@Model.FormNumber</code>.</div>
+                        <span class="text-danger" asp-validation-for="SchemaUpload"></span>
+                    </div>
+                    <button class="btn btn-primary btn-sm" type="submit">Upload & Analyze</button>
+                </form>
+            </div>
+        </div>
+
+        <div class="card">
+            <div class="card-body">
+                <div class="d-flex justify-content-between align-items-center">
+                    <h2 class="h6 mb-0">Versions</h2>
+                    <form method="post"
+                          asp-page-handler="DeleteForm"
+                          asp-route-formNumber="@Model.FormNumber"
+                          onsubmit="return confirm('Delete the whole form, all schema versions, and all uploaded data?');">
+                        <button type="submit" class="btn btn-outline-danger btn-sm">Delete form</button>
+                    </form>
+                </div>
+                @if (Model.Versions.Count == 0)
+                {
+                    <div class="text-muted">No versions.</div>
+                }
+                else
+                {
+                    <div class="list-group">
+                        @foreach (var v in Model.Versions)
+                        {
+                            <div class="list-group-item d-flex justify-content-between align-items-center">
+                                <div><code>v@(v)</code></div>
+                                <div class="d-flex gap-2">
+                                    <a class="btn btn-primary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(v)">Open</a>
+                                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(v)?editTypes=true#types">Edit</a>
+                                    <a class="btn btn-outline-primary btn-sm" href="?handler=Download&formNumber=@Uri.EscapeDataString(Model.FormNumber)&version=@v">Download</a>
+                                    <a class="btn btn-outline-secondary btn-sm" href="?handler=Structure&formNumber=@Uri.EscapeDataString(Model.FormNumber)&version=@v" target="_blank">JSON</a>
+                                    <form method="post"
+                                          asp-page-handler="DeleteVersion"
+                                          asp-route-formNumber="@Model.FormNumber"
+                                          asp-route-version="@v"
+                                          onsubmit="return confirm('Delete this schema version and all uploaded data for it?');">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
+                                    </form>
+                                </div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-body">
+                <h2 class="h6">Schema hash</h2>
+                <code>@Model.Latest.StructureHash</code>
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-body">
+                <h2 class="h6">Latest data uploads</h2>
+
+                <div class="mb-2">
+                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/aggregated">Aggregated data</a>
+                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">All uploads</a>
+                </div>
+
+                @if (Model.LatestUploads.Count == 0)
+                {
+                    <div class="text-muted">No uploads for latest version.</div>
+                }
+                else
+                {
+                    <div class="list-group">
+                        @foreach (var u in Model.LatestUploads)
+                        {
+                            var fileHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{u.FormVersion}/{Uri.EscapeDataString(u.UploadId)}/file";
+                            <div class="list-group-item">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <div>
+                                        <div><small class="text-muted">UTC:</small> <code>@u.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></div>
+                                        <div><small class="text-muted">Rows:</small> <code>@u.RowCount</code></div>
+                                    </div>
+                                    <div class="d-flex gap-2">
+                                        <a class="btn btn-outline-primary btn-sm" href="@fileHref">File</a>
+                                    </div>
+                                </div>
+                                <div class="text-muted"><small>@u.OriginalFileName</small></div>
+                            </div>
+                        }
+                    </div>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h6">Header structure</h2>
+
+                @if (Model.Latest.Header.Count == 0)
+                {
+                    <div class="text-muted">No header nodes.</div>
+                }
+                else
+                {
+                    @RenderNodes(Model.Latest.Header)
+                }
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-body">
+                <h2 class="h6">Columns</h2>
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0">
+                        <thead>
+                        <tr>
+                            <th class="text-end">#</th>
+                            <th class="text-end">№</th>
+                            <th>Name</th>
+                            <th>Group</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var c in Model.Latest.Columns)
+                        {
+                            var groupPath = c.Path;
+                            var groupSep = groupPath.LastIndexOf(" / ", StringComparison.Ordinal);
+                            if (groupSep > 0)
+                            {
+                                groupPath = groupPath.Substring(0, groupSep);
+                            }
+
+                            <tr>
+                                <td class="text-end"><code>@c.Index</code></td>
+                                <td class="text-end">@if (!string.IsNullOrWhiteSpace(c.ColumnNumber)) { <code>@c.ColumnNumber</code> }</td>
+                                <td>@c.Name</td>
+                                <td class="text-muted"><small>@groupPath</small></td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@functions {
+    private IHtmlContent RenderNodes(IReadOnlyList<SamorodinkaTech.FormStructures.Web.Models.HeaderNode> nodes)
+    {
+        var ul = new TagBuilder("ul");
+        ul.AddCssClass("mb-0");
+
+        foreach (var n in nodes.OrderBy(x => x.ColStart).ThenBy(x => x.RowStart))
+        {
+            var li = new TagBuilder("li");
+
+            var label = new TagBuilder("span");
+            label.InnerHtml.Append(n.Label);
+
+            var meta = new TagBuilder("span");
+            meta.AddCssClass("text-muted");
+            meta.AddCssClass("ms-2");
+            meta.InnerHtml.Append($"(r{n.RowStart}-{n.RowEnd}, c{n.ColStart}-{n.ColEnd})");
+
+            li.InnerHtml.AppendHtml(label);
+            li.InnerHtml.AppendHtml(meta);
+
+            if (n.Children.Count > 0)
+            {
+                li.InnerHtml.AppendHtml(RenderNodes(n.Children));
+            }
+
+            ul.InnerHtml.AppendHtml(li);
+        }
+
+        return ul;
+    }
+}

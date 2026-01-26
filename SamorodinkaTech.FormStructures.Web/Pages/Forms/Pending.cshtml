@@ -1,0 +1,129 @@
+@page "/forms/{formNumber}/pending/{pendingId}"
+@using Microsoft.AspNetCore.Mvc.Rendering
+@model SamorodinkaTech.FormStructures.Web.Pages.Forms.PendingModel
+@{
+    ViewData["Title"] = $"Pending mapping · {Model.FormNumber}";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        <h1 class="h4 mb-0">Pending column mapping</h1>
+        <div class="text-muted"><small>#@Model.FormNumber · pending <code>@Model.PendingId</code></small></div>
+        @if (Model.IntendedVersion > 0)
+        {
+            <div class="text-muted"><small>Will create schema version: <code>v@(Model.IntendedVersion)</code></small></div>
+        }
+        <div class="text-muted"><small>Map from: <code>v@(Model.MapFromVersion)</code></small></div>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="/settings/forms">Back to uploads</a>
+        <form method="post" asp-page-handler="Cancel" onsubmit="return confirm('Cancel this pending upload?');">
+            <input type="hidden" name="formNumber" value="@Model.FormNumber" />
+            <input type="hidden" name="pendingId" value="@Model.PendingId" />
+            <button type="submit" class="btn btn-outline-danger btn-sm">Cancel</button>
+        </form>
+    </div>
+</div>
+
+<hr />
+
+<div class="text-danger" asp-validation-summary="All"></div>
+
+@if (Model.PendingUpload is null)
+{
+    <div class="alert alert-warning">Pending upload not found.</div>
+}
+else if (Model.PreviousStructure is null)
+{
+    <div class="alert alert-warning">Previous schema is not available; mapping cannot be completed.</div>
+}
+else
+{
+    <div class="alert alert-info">
+        New schema version will be created only after you click <strong>Save mapping</strong>.
+    </div>
+
+    <form method="post" asp-page-handler="SaveMapping">
+        <input type="hidden" name="formNumber" value="@Model.FormNumber" />
+        <input type="hidden" name="pendingId" value="@Model.PendingId" />
+        <input type="hidden" name="mapFrom" value="@Model.MapFromVersion" />
+
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                <tr>
+                    <th>New column</th>
+                    <th>Map from (v@Model.MapFromVersion)</th>
+                    <th>Type (if unmapped)</th>
+                </tr>
+                </thead>
+                <tbody>
+                @for (var i = 0; i < Model.MapEdits.Count; i++)
+                {
+                    var newPath = Model.MapEdits[i].NewPath;
+                    var newCol = Model.PendingUpload.Structure.Columns.FirstOrDefault(c => string.Equals(c.Path, newPath, StringComparison.Ordinal));
+                    var groupPath = string.Empty;
+                    var groupSep = newPath.LastIndexOf(" / ", StringComparison.Ordinal);
+                    if (groupSep > 0)
+                    {
+                        groupPath = newPath.Substring(0, groupSep);
+                    }
+
+                    <tr>
+                        <td>
+                            <div>@(newCol?.Name ?? newPath)</div>
+                            <div class="text-muted">
+                                <small>
+                                    @if (!string.IsNullOrWhiteSpace(newCol?.ColumnNumber))
+                                    {
+                                        <text>№ <code>@newCol.ColumnNumber</code></text>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(groupPath))
+                                    {
+                                        <text> · @groupPath</text>
+                                    }
+                                </small>
+                            </div>
+                            <input type="hidden" asp-for="MapEdits[i].NewPath" />
+                        </td>
+                        <td>
+                            <select class="form-select form-select-sm" asp-for="MapEdits[i].FromPath">
+                                <option value="">(none)</option>
+                                @foreach (var oldCol in Model.PreviousStructure.Columns.OrderBy(c => c.Index))
+                                {
+                                    var oldGroupPath = string.Empty;
+                                    var oldGroupSep = oldCol.Path.LastIndexOf(" / ", StringComparison.Ordinal);
+                                    if (oldGroupSep > 0)
+                                    {
+                                        oldGroupPath = oldCol.Path.Substring(0, oldGroupSep);
+                                    }
+
+                                    if (!string.IsNullOrWhiteSpace(oldCol.ColumnNumber))
+                                    {
+                                        <option value="@oldCol.Path">№ @oldCol.ColumnNumber · @oldCol.Name@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
+                                    }
+                                    else
+                                    {
+                                        <option value="@oldCol.Path">@oldCol.Name@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
+                                    }
+                                }
+                            </select>
+                        </td>
+                        <td>
+                            <select class="form-select form-select-sm" asp-for="MapEdits[i].Type" asp-items="Html.GetEnumSelectList<SamorodinkaTech.FormStructures.Web.Models.ColumnType>()"></select>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="d-flex justify-content-end gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">Save mapping</button>
+        </div>
+    </form>
+}
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

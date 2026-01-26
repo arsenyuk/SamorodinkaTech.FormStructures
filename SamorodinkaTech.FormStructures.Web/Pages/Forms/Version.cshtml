@@ -1,0 +1,309 @@
+@page "/forms/{formNumber}/v{version:int}"
+@using Microsoft.AspNetCore.Html
+@using Microsoft.AspNetCore.Mvc.Rendering
+@model SamorodinkaTech.FormStructures.Web.Pages.Forms.VersionModel
+@{
+    ViewData["Title"] = $"Form {Model.Structure!.TemplateFormNumber ?? Model.Structure.FormNumber} v{Model.Version}";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        <h1 class="h4 mb-0">@Model.Structure!.FormTitle</h1>
+        <div class="text-muted"><small>Form number: <code>@(Model.Structure.TemplateFormNumber ?? Model.Structure.FormNumber)</code> · <code>v@(Model.Version)</code></small></div>
+        <div class="text-muted"><small>Index (URL): <code>@Model.FormNumber</code></small></div>
+        <div class="text-muted"><small>Uploaded (UTC): <code>@Model.Structure.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></small></div>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Back</a>
+        <a class="btn btn-outline-primary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)?handler=Download&formNumber=@Uri.EscapeDataString(Model.FormNumber)&version=@Model.Version">Download</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)?handler=Structure&formNumber=@Uri.EscapeDataString(Model.FormNumber)&version=@Model.Version" target="_blank">JSON</a>
+        <form method="post"
+              asp-page-handler="Delete"
+              asp-route-formNumber="@Model.FormNumber"
+              asp-route-version="@Model.Version"
+              onsubmit="return confirm('Delete this schema version and all uploaded data for it?');">
+            <button type="submit" class="btn btn-outline-danger btn-sm">Delete version</button>
+        </form>
+    </div>
+</div>
+
+<hr />
+
+@if (TempData["SaveMessage"] is string saveMsg)
+{
+    <div class="alert alert-success">@saveMsg</div>
+}
+
+<div class="text-danger" asp-validation-summary="All"></div>
+
+<div class="row g-3">
+    <div class="col-md-4">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h6">Schema hash</h2>
+                <code>@Model.Structure.StructureHash</code>
+            </div>
+        </div>
+
+        @if (Model.MapFromVersion is int prev && Model.PreviousStructure is not null)
+        {
+            <div class="card mt-3">
+                <div class="card-body">
+                    <h2 class="h6">Column mapping</h2>
+                    <div class="text-muted mb-2"><small>Map new columns (v@(Model.Version)) to previous columns (v@prev) to reuse their types. Unmapped columns use the selected type.</small></div>
+
+                    <form method="post" asp-page-handler="SaveMapping">
+                        <input type="hidden" name="formNumber" value="@Model.FormNumber" />
+                        <input type="hidden" name="version" value="@Model.Version" />
+                        <input type="hidden" name="mapFrom" value="@prev" />
+
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-0">
+                                <thead>
+                                <tr>
+                                    <th>New column</th>
+                                    <th>Map from (v@prev)</th>
+                                    <th>Type (if unmapped)</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                @for (var i = 0; i < Model.MapEdits.Count; i++)
+                                {
+                                    var newPath = Model.MapEdits[i].NewPath;
+                                    var newCol = Model.Structure!.Columns.FirstOrDefault(c => string.Equals(c.Path, newPath, StringComparison.Ordinal));
+                                    var mapGroupPath = string.Empty;
+                                    var mapGroupSep = newPath.LastIndexOf(" / ", StringComparison.Ordinal);
+                                    if (mapGroupSep > 0)
+                                    {
+                                        mapGroupPath = newPath.Substring(0, mapGroupSep);
+                                    }
+
+                                    <tr>
+                                        <td>
+                                            <div>@(newCol?.Name ?? newPath)</div>
+                                            <div class="text-muted">
+                                                <small>
+                                                    @if (!string.IsNullOrWhiteSpace(newCol?.ColumnNumber))
+                                                    {
+                                                        <text>№ <code>@newCol.ColumnNumber</code></text>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(mapGroupPath))
+                                                    {
+                                                        <text> · @mapGroupPath</text>
+                                                    }
+                                                </small>
+                                            </div>
+                                            <input type="hidden" asp-for="MapEdits[i].NewPath" />
+                                        </td>
+                                        <td>
+                                            <select class="form-select form-select-sm" asp-for="MapEdits[i].FromPath">
+                                                <option value="">(none)</option>
+                                                @foreach (var oldCol in Model.PreviousStructure.Columns.OrderBy(c => c.Index))
+                                                {
+                                                    var oldGroupPath = string.Empty;
+                                                    var oldGroupSep = oldCol.Path.LastIndexOf(" / ", StringComparison.Ordinal);
+                                                    if (oldGroupSep > 0)
+                                                    {
+                                                        oldGroupPath = oldCol.Path.Substring(0, oldGroupSep);
+                                                    }
+
+                                                    if (!string.IsNullOrWhiteSpace(oldCol.ColumnNumber))
+                                                    {
+                                                        <option value="@oldCol.Path">№ @oldCol.ColumnNumber · @oldCol.Name@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
+                                                    }
+                                                    else
+                                                    {
+                                                        <option value="@oldCol.Path">@oldCol.Name@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
+                                                    }
+                                                }
+                                            </select>
+                                        </td>
+                                        <td>
+                                            <select class="form-select form-select-sm" asp-for="MapEdits[i].Type" asp-items="Html.GetEnumSelectList<SamorodinkaTech.FormStructures.Web.Models.ColumnType>()"></select>
+                                        </td>
+                                    </tr>
+                                }
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="mt-3 d-flex justify-content-end">
+                            <button type="submit" class="btn btn-primary btn-sm">Save mapping</button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        }
+
+        <div class="card mt-3" id="types">
+            <div class="card-body">
+                <div class="d-flex align-items-start justify-content-between gap-3">
+                    <div>
+                        <h2 class="h6 mb-0">Column types</h2>
+                        <div class="text-muted"><small>Default type is <code>string</code>.</small></div>
+                    </div>
+                    <div class="d-flex gap-2">
+                        @if (!Model.EditTypes)
+                        {
+                            <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(Model.Version)?editTypes=true#types">Edit</a>
+                        }
+                        else
+                        {
+                            <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(Model.Version)#types">Close</a>
+                        }
+                    </div>
+                </div>
+
+                @if (Model.EditTypes)
+                {
+                    <form class="mt-3" method="post" asp-page-handler="SaveTypes">
+                        <input type="hidden" name="formNumber" value="@Model.FormNumber" />
+                        <input type="hidden" name="version" value="@Model.Version" />
+
+                        <div class="table-responsive">
+                            <table class="table table-sm mb-0">
+                                <thead>
+                                <tr>
+                                    <th>Column</th>
+                                    <th style="width: 200px;">Type</th>
+                                </tr>
+                                </thead>
+                                <tbody>
+                                @for (var i = 0; i < Model.TypeEdits.Count; i++)
+                                {
+                                    var path = Model.TypeEdits[i].Path;
+                                    var col = Model.Structure!.Columns.FirstOrDefault(c => string.Equals(c.Path, path, StringComparison.Ordinal));
+                                    var typeGroupPath = string.Empty;
+                                    var typeGroupSep = path.LastIndexOf(" / ", StringComparison.Ordinal);
+                                    if (typeGroupSep > 0)
+                                    {
+                                        typeGroupPath = path.Substring(0, typeGroupSep);
+                                    }
+
+                                    <tr>
+                                        <td>
+                                            <div>@(col?.Name ?? path)</div>
+                                            <div class="text-muted">
+                                                <small>
+                                                    @if (!string.IsNullOrWhiteSpace(col?.ColumnNumber))
+                                                    {
+                                                        <text>№ <code>@col.ColumnNumber</code></text>
+                                                    }
+                                                    @if (!string.IsNullOrWhiteSpace(typeGroupPath))
+                                                    {
+                                                        <text> · @typeGroupPath</text>
+                                                    }
+                                                </small>
+                                            </div>
+                                            <input type="hidden" asp-for="TypeEdits[i].Path" />
+                                        </td>
+                                        <td>
+                                            <select class="form-select form-select-sm" asp-for="TypeEdits[i].Type" asp-items="Html.GetEnumSelectList<SamorodinkaTech.FormStructures.Web.Models.ColumnType>()"></select>
+                                        </td>
+                                    </tr>
+                                }
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="mt-3 d-flex justify-content-end">
+                            <button type="submit" class="btn btn-primary btn-sm">Save types</button>
+                        </div>
+                    </form>
+                }
+            </div>
+        </div>
+    </div>
+
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-body">
+                <h2 class="h6">Header structure</h2>
+
+                @if (Model.Structure.Header.Count == 0)
+                {
+                    <div class="text-muted">No header nodes.</div>
+                }
+                else
+                {
+                    @RenderNodes(Model.Structure.Header)
+                }
+            </div>
+        </div>
+
+        <div class="card mt-3">
+            <div class="card-body">
+                <h2 class="h6">Columns</h2>
+                <div class="table-responsive">
+                    <table class="table table-sm mb-0">
+                        <thead>
+                        <tr>
+                            <th class="text-end">#</th>
+                            <th class="text-end">№</th>
+                            <th>Name</th>
+                            <th>Group</th>
+                            <th>Type</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var c in Model.Structure.Columns)
+                        {
+                            var groupPath = c.Path;
+                            var groupSep = groupPath.LastIndexOf(" / ", StringComparison.Ordinal);
+                            if (groupSep > 0)
+                            {
+                                groupPath = groupPath.Substring(0, groupSep);
+                            }
+
+                            <tr>
+                                <td class="text-end"><code>@c.Index</code></td>
+                                <td class="text-end">@if (!string.IsNullOrWhiteSpace(c.ColumnNumber)) { <code>@c.ColumnNumber</code> }</td>
+                                <td>@c.Name</td>
+                                <td class="text-muted"><small>@groupPath</small></td>
+                                <td><code>@c.Type</code></td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+@functions {
+    private IHtmlContent RenderNodes(IReadOnlyList<SamorodinkaTech.FormStructures.Web.Models.HeaderNode> nodes)
+    {
+        var ul = new TagBuilder("ul");
+        ul.AddCssClass("mb-0");
+
+        foreach (var n in nodes.OrderBy(x => x.ColStart).ThenBy(x => x.RowStart))
+        {
+            var li = new TagBuilder("li");
+
+            var label = new TagBuilder("span");
+            label.InnerHtml.Append(n.Label);
+
+            var meta = new TagBuilder("span");
+            meta.AddCssClass("text-muted");
+            meta.AddCssClass("ms-2");
+            meta.InnerHtml.Append($"(r{n.RowStart}-{n.RowEnd}, c{n.ColStart}-{n.ColEnd})");
+
+            li.InnerHtml.AppendHtml(label);
+            li.InnerHtml.AppendHtml(meta);
+
+            if (n.Children.Count > 0)
+            {
+                li.InnerHtml.AppendHtml(RenderNodes(n.Children));
+            }
+
+            ul.InnerHtml.AppendHtml(li);
+        }
+
+        return ul;
+    }
+}
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}
