@@ -17,17 +17,19 @@ public sealed class FormStorage
 
     public string RootPath => _root;
 
+    private string FormsRootPath => Path.Combine(_root, "forms");
+
     public void EnsureInitialized()
     {
         Directory.CreateDirectory(_root);
-        Directory.CreateDirectory(Path.Combine(_root, "forms"));
+        Directory.CreateDirectory(FormsRootPath);
     }
 
     public IReadOnlyList<FormLatestInfo> ListLatestForms()
     {
         EnsureInitialized();
 
-        var formsDir = Path.Combine(_root, "forms");
+        var formsDir = FormsRootPath;
         if (!Directory.Exists(formsDir))
         {
             return Array.Empty<FormLatestInfo>();
@@ -459,7 +461,7 @@ public sealed class FormStorage
         }
 
         var cutoffUtc = DateTime.UtcNow - maxAge;
-        var formsDir = Path.Combine(_root, "forms");
+        var formsDir = FormsRootPath;
         if (!Directory.Exists(formsDir))
         {
             return 0;
@@ -648,13 +650,13 @@ public sealed class FormStorage
         return (latestVersion, latestStructure?.StructureHash);
     }
 
-    private string GetFormDir(string formNumber) => Path.Combine(_root, "forms", SafeDirName(formNumber));
+    private string GetFormDir(string formNumber) => GetSafeSubdir(FormsRootPath, formNumber, nameof(formNumber));
 
     private string GetVersionDir(string formNumber, int version) => Path.Combine(GetFormDir(formNumber), $"v{version}");
 
     private string GetPendingRootDir(string formNumber) => Path.Combine(GetFormDir(formNumber), "_pending");
 
-    private string GetPendingDir(string formNumber, string pendingId) => Path.Combine(GetPendingRootDir(formNumber), SafeDirName(pendingId));
+    private string GetPendingDir(string formNumber, string pendingId) => GetSafeSubdir(GetPendingRootDir(formNumber), pendingId, nameof(pendingId));
 
     private async Task<string> SavePendingAsyncInternal(FormStructure structure, MemoryStream originalXlsx, int previousVersion, CancellationToken ct)
     {
@@ -692,6 +694,34 @@ public sealed class FormStorage
         }
 
         return name.Trim();
+    }
+
+    private static string GetSafeSubdir(string baseDir, string segment, string paramName)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            throw new ArgumentException("Directory name is required.", paramName);
+        }
+
+        var safe = SafeDirName(segment);
+        if (string.IsNullOrWhiteSpace(safe) || safe is "." or "..")
+        {
+            throw new ArgumentException("Invalid directory name.", paramName);
+        }
+
+        var baseFull = Path.GetFullPath(baseDir);
+        var candidateFull = Path.GetFullPath(Path.Combine(baseFull, safe));
+
+        var basePrefix = baseFull.EndsWith(Path.DirectorySeparatorChar)
+            ? baseFull
+            : baseFull + Path.DirectorySeparatorChar;
+
+        if (!candidateFull.StartsWith(basePrefix, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Invalid directory name (path traversal detected).", paramName);
+        }
+
+        return candidateFull;
     }
 
     private static void TryDeleteDirectoryIfEmpty(string path)

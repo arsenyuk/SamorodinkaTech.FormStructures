@@ -173,7 +173,7 @@ public sealed class FormDataStorage
     {
         EnsureInitialized();
 
-        var formDir = Path.Combine(RootPath, SafeDirName(formNumber));
+        var formDir = GetSafeSubdir(RootPath, formNumber, nameof(formNumber));
         if (!Directory.Exists(formDir))
         {
             return null;
@@ -219,7 +219,7 @@ public sealed class FormDataStorage
     {
         EnsureInitialized();
 
-        var formDir = Path.Combine(RootPath, SafeDirName(formNumber));
+        var formDir = GetSafeSubdir(RootPath, formNumber, nameof(formNumber));
         if (!Directory.Exists(formDir))
         {
             return Array.Empty<FormDataUpload>();
@@ -338,7 +338,14 @@ public sealed class FormDataStorage
 
             // Best-effort cleanup of empty folders.
             TryDeleteDirectoryIfEmpty(GetVersionDir(formNumber, version));
-            TryDeleteDirectoryIfEmpty(Path.Combine(RootPath, SafeDirName(formNumber)));
+            try
+            {
+                TryDeleteDirectoryIfEmpty(GetSafeSubdir(RootPath, formNumber, nameof(formNumber)));
+            }
+            catch (ArgumentException)
+            {
+                // Ignore invalid names during best-effort cleanup.
+            }
 
             _logger.LogInformation("Deleted data upload {FormNumber} v{Version} {UploadId}", formNumber, version, uploadId);
             return true;
@@ -370,7 +377,14 @@ public sealed class FormDataStorage
             Directory.Delete(versionDir, recursive: true);
 
             // Best-effort cleanup of empty folders.
-            TryDeleteDirectoryIfEmpty(Path.Combine(RootPath, SafeDirName(formNumber)));
+            try
+            {
+                TryDeleteDirectoryIfEmpty(GetSafeSubdir(RootPath, formNumber, nameof(formNumber)));
+            }
+            catch (ArgumentException)
+            {
+                // Ignore invalid names during best-effort cleanup.
+            }
 
             _logger.LogInformation("Deleted data uploads for {FormNumber} v{Version}", formNumber, version);
             return true;
@@ -391,7 +405,7 @@ public sealed class FormDataStorage
             return false;
         }
 
-        var formDir = Path.Combine(RootPath, SafeDirName(formNumber));
+        var formDir = GetSafeSubdir(RootPath, formNumber, nameof(formNumber));
         if (!Directory.Exists(formDir))
         {
             return false;
@@ -424,14 +438,14 @@ public sealed class FormDataStorage
             return true;
         }
 
-        var oldDir = Path.Combine(RootPath, SafeDirName(oldFormNumber));
+        var oldDir = GetSafeSubdir(RootPath, oldFormNumber, nameof(oldFormNumber));
         if (!Directory.Exists(oldDir))
         {
             // No data uploaded yet.
             return true;
         }
 
-        var newDir = Path.Combine(RootPath, SafeDirName(newFormNumber));
+        var newDir = GetSafeSubdir(RootPath, newFormNumber, nameof(newFormNumber));
         if (Directory.Exists(newDir))
         {
             throw new InvalidOperationException($"Data directory already exists for form '{newFormNumber}'.");
@@ -444,12 +458,13 @@ public sealed class FormDataStorage
 
     private string GetUploadDir(string formNumber, int version, string uploadId)
     {
-        return Path.Combine(GetVersionDir(formNumber, version), SafeDirName(uploadId));
+        return GetSafeSubdir(GetVersionDir(formNumber, version), uploadId, nameof(uploadId));
     }
 
     private string GetVersionDir(string formNumber, int version)
     {
-        return Path.Combine(RootPath, SafeDirName(formNumber), $"v{version}");
+        var formDir = GetSafeSubdir(RootPath, formNumber, nameof(formNumber));
+        return Path.Combine(formDir, $"v{version}");
     }
 
     private static string SafeDirName(string name)
@@ -460,6 +475,34 @@ public sealed class FormDataStorage
         }
 
         return name.Trim();
+    }
+
+    private static string GetSafeSubdir(string baseDir, string segment, string paramName)
+    {
+        if (string.IsNullOrWhiteSpace(segment))
+        {
+            throw new ArgumentException("Directory name is required.", paramName);
+        }
+
+        var safe = SafeDirName(segment);
+        if (string.IsNullOrWhiteSpace(safe) || safe is "." or "..")
+        {
+            throw new ArgumentException("Invalid directory name.", paramName);
+        }
+
+        var baseFull = Path.GetFullPath(baseDir);
+        var candidateFull = Path.GetFullPath(Path.Combine(baseFull, safe));
+
+        var basePrefix = baseFull.EndsWith(Path.DirectorySeparatorChar)
+            ? baseFull
+            : baseFull + Path.DirectorySeparatorChar;
+
+        if (!candidateFull.StartsWith(basePrefix, StringComparison.Ordinal))
+        {
+            throw new ArgumentException("Invalid directory name (path traversal detected).", paramName);
+        }
+
+        return candidateFull;
     }
 
     private static void TryDeleteDirectoryIfEmpty(string path)
