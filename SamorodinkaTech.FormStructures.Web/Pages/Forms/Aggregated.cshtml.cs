@@ -113,14 +113,22 @@ public class AggregatedModel : PageModel
         }
         catch (FormParseException ex)
         {
-            _logger.LogWarning(ex, "Failed to parse uploaded data file for form {FormNumber}", FormNumber);
-            ModelState.AddModelError(string.Empty, ex.Message);
+            _logger.LogWarning(
+                ex,
+                "Failed to parse uploaded data file for form {FormNumber}. ExceptionChain={ExceptionChain}",
+                FormNumber,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             return Page();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to upload data file for form {FormNumber}", FormNumber);
-            ModelState.AddModelError(string.Empty, "Failed to upload file.");
+            _logger.LogError(
+                ex,
+                "Failed to upload data file for form {FormNumber}. ExceptionChain={ExceptionChain}",
+                FormNumber,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             return Page();
         }
     }

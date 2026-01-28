@@ -74,15 +74,23 @@ public class FormsModel : PageModel
         }
         catch (FormParseException ex)
         {
-            _logger.LogWarning(ex, "Failed to parse uploaded file {FileName}", Upload.FileName);
-            ModelState.AddModelError(string.Empty, ex.Message);
+            _logger.LogWarning(
+                ex,
+                "Failed to parse uploaded file {FileName}. ExceptionChain={ExceptionChain}",
+                Upload.FileName,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             LoadForms();
             return Page();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error while processing uploaded file {FileName}", Upload.FileName);
-            ModelState.AddModelError(string.Empty, "Unexpected error while processing the file. See logs for details.");
+            _logger.LogError(
+                ex,
+                "Unexpected error while processing uploaded file {FileName}. ExceptionChain={ExceptionChain}",
+                Upload.FileName,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             LoadForms();
             return Page();
         }

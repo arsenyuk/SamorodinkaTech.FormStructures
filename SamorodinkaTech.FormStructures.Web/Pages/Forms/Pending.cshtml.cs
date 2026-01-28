@@ -157,8 +157,13 @@ public class PendingModel : PageModel
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to commit pending upload {FormNumber} ({PendingId})", FormNumber, PendingId);
-            ModelState.AddModelError(string.Empty, "Failed to create new schema version from pending upload.");
+            _logger.LogError(
+                ex,
+                "Failed to commit pending upload {FormNumber} ({PendingId}). ExceptionChain={ExceptionChain}",
+                FormNumber,
+                PendingId,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, $"Failed to create new schema version from pending upload. {ExceptionUtil.FormatExceptionChain(ex)}");
             return Page();
         }
     }

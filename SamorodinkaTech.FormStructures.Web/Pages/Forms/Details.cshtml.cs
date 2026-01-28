@@ -159,15 +159,23 @@ public class DetailsModel : PageModel
         }
         catch (FormParseException ex)
         {
-            _logger.LogWarning(ex, "Failed to load data from uploaded file {FileName}", DataUpload.FileName);
-            ModelState.AddModelError(string.Empty, ex.Message);
+            _logger.LogWarning(
+                ex,
+                "Failed to load data from uploaded file {FileName}. ExceptionChain={ExceptionChain}",
+                DataUpload.FileName,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
             return Page();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error while processing uploaded data file {FileName}", DataUpload.FileName);
-            ModelState.AddModelError(string.Empty, "Unexpected error while processing the file. See logs for details.");
+            _logger.LogError(
+                ex,
+                "Unexpected error while processing uploaded data file {FileName}. ExceptionChain={ExceptionChain}",
+                DataUpload.FileName,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
             return Page();
         }
@@ -233,15 +241,23 @@ public class DetailsModel : PageModel
         }
         catch (FormParseException ex)
         {
-            _logger.LogWarning(ex, "Failed to parse uploaded file {FileName}", SchemaUpload.FileName);
-            ModelState.AddModelError(string.Empty, ex.Message);
+            _logger.LogWarning(
+                ex,
+                "Failed to parse uploaded file {FileName}. ExceptionChain={ExceptionChain}",
+                SchemaUpload.FileName,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
             return Page();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Unexpected error while processing uploaded file {FileName}", SchemaUpload.FileName);
-            ModelState.AddModelError(string.Empty, "Unexpected error while processing the file. See logs for details.");
+            _logger.LogError(
+                ex,
+                "Unexpected error while processing uploaded file {FileName}. ExceptionChain={ExceptionChain}",
+                SchemaUpload.FileName,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
             return Page();
         }

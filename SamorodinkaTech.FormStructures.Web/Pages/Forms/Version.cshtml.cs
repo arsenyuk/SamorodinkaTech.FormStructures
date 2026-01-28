@@ -137,8 +137,13 @@ public class VersionModel : PageModel
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to save column types for {FormNumber} v{Version}", FormNumber, Version);
-            ModelState.AddModelError(string.Empty, "Failed to save column types.");
+            _logger.LogError(
+                ex,
+                "Failed to save column types for {FormNumber} v{Version}. ExceptionChain={ExceptionChain}",
+                FormNumber,
+                Version,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, $"Failed to save column types. {ExceptionUtil.FormatExceptionChain(ex)}");
             return Page();
         }
     }
@@ -235,8 +240,13 @@ public class VersionModel : PageModel
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to save column mapping for {FormNumber} v{Version}", FormNumber, Version);
-            ModelState.AddModelError(string.Empty, "Failed to save column mapping.");
+            _logger.LogError(
+                ex,
+                "Failed to save column mapping for {FormNumber} v{Version}. ExceptionChain={ExceptionChain}",
+                FormNumber,
+                Version,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, $"Failed to save column mapping. {ExceptionUtil.FormatExceptionChain(ex)}");
             return Page();
         }
     }
