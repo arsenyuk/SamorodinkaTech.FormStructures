@@ -1,9 +1,12 @@
 using SamorodinkaTech.FormStructures.Web.Models;
+using System.Collections.Concurrent;
 
 namespace SamorodinkaTech.FormStructures.Web.Services;
 
 public sealed class FormDataStorage
 {
+    private static readonly ConcurrentDictionary<string, object> FormLocks = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly FormStorage _formStorage;
     private readonly ILogger<FormDataStorage> _logger;
 
@@ -14,6 +17,17 @@ public sealed class FormDataStorage
     }
 
     public string RootPath => Path.Combine(_formStorage.RootPath, "data");
+
+    private static object GetFormLock(string formNumber)
+    {
+        var key = (formNumber ?? string.Empty).Trim();
+        if (key.Length == 0)
+        {
+            key = "__empty__";
+        }
+
+        return FormLocks.GetOrAdd(key, _ => new object());
+    }
 
     public void EnsureInitialized()
     {
@@ -109,16 +123,24 @@ public sealed class FormDataStorage
         };
 
         var uploadDir = GetUploadDir(upload.FormNumber, upload.FormVersion, upload.UploadId);
-        Directory.CreateDirectory(uploadDir);
-
-        var originalPath = Path.Combine(uploadDir, "original.xlsx");
-        await File.WriteAllBytesAsync(originalPath, bytes, ct);
-
         var dataJson = JsonUtil.ToStableJson(dataFile);
-        await File.WriteAllTextAsync(Path.Combine(uploadDir, "data.json"), dataJson, ct);
-
         var metaJson = JsonUtil.ToStableJson(upload);
-        await File.WriteAllTextAsync(Path.Combine(uploadDir, "meta.json"), metaJson, ct);
+
+        lock (GetFormLock(upload.FormNumber))
+        {
+            if (Directory.Exists(uploadDir))
+            {
+                throw new InvalidOperationException($"Data upload directory already exists: {uploadDir}");
+            }
+
+            Directory.CreateDirectory(uploadDir);
+
+            var originalPath = Path.Combine(uploadDir, "original.xlsx");
+            File.WriteAllBytes(originalPath, bytes);
+
+            File.WriteAllText(Path.Combine(uploadDir, "data.json"), dataJson);
+            File.WriteAllText(Path.Combine(uploadDir, "meta.json"), metaJson);
+        }
 
         _logger.LogInformation(
             "Stored data upload {FormNumber} v{Version} ({Rows} rows) at {Dir}",
@@ -332,28 +354,36 @@ public sealed class FormDataStorage
             return false;
         }
 
-        try
+        lock (GetFormLock(formNumber))
         {
-            Directory.Delete(uploadDir, recursive: true);
+            if (!Directory.Exists(uploadDir))
+            {
+                return false;
+            }
 
-            // Best-effort cleanup of empty folders.
-            TryDeleteDirectoryIfEmpty(GetVersionDir(formNumber, version));
             try
             {
-                TryDeleteDirectoryIfEmpty(GetSafeSubdir(RootPath, formNumber, nameof(formNumber)));
-            }
-            catch (ArgumentException)
-            {
-                // Ignore invalid names during best-effort cleanup.
-            }
+                Directory.Delete(uploadDir, recursive: true);
 
-            _logger.LogInformation("Deleted data upload {FormNumber} v{Version} {UploadId}", formNumber, version, uploadId);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to delete data upload {FormNumber} v{Version} {UploadId}", formNumber, version, uploadId);
-            throw;
+                // Best-effort cleanup of empty folders.
+                TryDeleteDirectoryIfEmpty(GetVersionDir(formNumber, version));
+                try
+                {
+                    TryDeleteDirectoryIfEmpty(GetSafeSubdir(RootPath, formNumber, nameof(formNumber)));
+                }
+                catch (ArgumentException)
+                {
+                    // Ignore invalid names during best-effort cleanup.
+                }
+
+                _logger.LogInformation("Deleted data upload {FormNumber} v{Version} {UploadId}", formNumber, version, uploadId);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete data upload {FormNumber} v{Version} {UploadId}", formNumber, version, uploadId);
+                throw;
+            }
         }
     }
 
@@ -372,27 +402,35 @@ public sealed class FormDataStorage
             return false;
         }
 
-        try
+        lock (GetFormLock(formNumber))
         {
-            Directory.Delete(versionDir, recursive: true);
+            if (!Directory.Exists(versionDir))
+            {
+                return false;
+            }
 
-            // Best-effort cleanup of empty folders.
             try
             {
-                TryDeleteDirectoryIfEmpty(GetSafeSubdir(RootPath, formNumber, nameof(formNumber)));
-            }
-            catch (ArgumentException)
-            {
-                // Ignore invalid names during best-effort cleanup.
-            }
+                Directory.Delete(versionDir, recursive: true);
 
-            _logger.LogInformation("Deleted data uploads for {FormNumber} v{Version}", formNumber, version);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to delete data uploads for {FormNumber} v{Version}", formNumber, version);
-            throw;
+                // Best-effort cleanup of empty folders.
+                try
+                {
+                    TryDeleteDirectoryIfEmpty(GetSafeSubdir(RootPath, formNumber, nameof(formNumber)));
+                }
+                catch (ArgumentException)
+                {
+                    // Ignore invalid names during best-effort cleanup.
+                }
+
+                _logger.LogInformation("Deleted data uploads for {FormNumber} v{Version}", formNumber, version);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete data uploads for {FormNumber} v{Version}", formNumber, version);
+                throw;
+            }
         }
     }
 
@@ -411,16 +449,24 @@ public sealed class FormDataStorage
             return false;
         }
 
-        try
+        lock (GetFormLock(formNumber))
         {
-            Directory.Delete(formDir, recursive: true);
-            _logger.LogInformation("Deleted data uploads for form {FormNumber}", formNumber);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to delete data uploads for form {FormNumber}", formNumber);
-            throw;
+            if (!Directory.Exists(formDir))
+            {
+                return false;
+            }
+
+            try
+            {
+                Directory.Delete(formDir, recursive: true);
+                _logger.LogInformation("Deleted data uploads for form {FormNumber}", formNumber);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete data uploads for form {FormNumber}", formNumber);
+                throw;
+            }
         }
     }
 
@@ -445,15 +491,31 @@ public sealed class FormDataStorage
             return true;
         }
 
-        var newDir = GetSafeSubdir(RootPath, newFormNumber, nameof(newFormNumber));
-        if (Directory.Exists(newDir))
-        {
-            throw new InvalidOperationException($"Data directory already exists for form '{newFormNumber}'.");
-        }
+        // Lock both keys in stable order to avoid deadlocks.
+        var first = string.Compare(oldFormNumber, newFormNumber, StringComparison.OrdinalIgnoreCase) <= 0
+            ? oldFormNumber
+            : newFormNumber;
+        var second = string.Equals(first, oldFormNumber, StringComparison.OrdinalIgnoreCase) ? newFormNumber : oldFormNumber;
 
-        Directory.Move(oldDir, newDir);
-        _logger.LogInformation("Renamed data form {OldFormNumber} -> {NewFormNumber}", oldFormNumber, newFormNumber);
-        return true;
+        lock (GetFormLock(first))
+        lock (GetFormLock(second))
+        {
+            if (!Directory.Exists(oldDir))
+            {
+                // No data uploaded yet.
+                return true;
+            }
+
+            var newDir = GetSafeSubdir(RootPath, newFormNumber, nameof(newFormNumber));
+            if (Directory.Exists(newDir))
+            {
+                throw new InvalidOperationException($"Data directory already exists for form '{newFormNumber}'.");
+            }
+
+            Directory.Move(oldDir, newDir);
+            _logger.LogInformation("Renamed data form {OldFormNumber} -> {NewFormNumber}", oldFormNumber, newFormNumber);
+            return true;
+        }
     }
 
     private string GetUploadDir(string formNumber, int version, string uploadId)

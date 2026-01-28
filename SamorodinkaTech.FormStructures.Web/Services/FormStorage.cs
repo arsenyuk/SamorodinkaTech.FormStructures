@@ -1,10 +1,13 @@
 using Microsoft.Extensions.Options;
 using SamorodinkaTech.FormStructures.Web.Models;
+using System.Collections.Concurrent;
 
 namespace SamorodinkaTech.FormStructures.Web.Services;
 
 public sealed class FormStorage
 {
+    private static readonly ConcurrentDictionary<string, object> FormLocks = new(StringComparer.OrdinalIgnoreCase);
+
     private readonly string _root;
     private readonly ILogger<FormStorage> _logger;
 
@@ -18,6 +21,17 @@ public sealed class FormStorage
     public string RootPath => _root;
 
     private string FormsRootPath => Path.Combine(_root, "forms");
+
+    private static object GetFormLock(string formNumber)
+    {
+        var key = (formNumber ?? string.Empty).Trim();
+        if (key.Length == 0)
+        {
+            key = "__empty__";
+        }
+
+        return FormLocks.GetOrAdd(key, _ => new object());
+    }
 
     public void EnsureInitialized()
     {
@@ -179,149 +193,152 @@ public sealed class FormStorage
 
         var formKey = string.IsNullOrWhiteSpace(targetFormNumber) ? parsed.FormNumber : targetFormNumber;
 
-        EnsureFormMetaExists(
-            formNumber: formKey,
-            displayFormNumber: parsed.FormNumber,
-            displayFormTitle: parsed.FormTitle);
-
-        var (latestVersion, latestHash) = GetLatestVersionInfo(formKey);
-        var isNewVersion = latestVersion == 0 || !string.Equals(latestHash, parsed.StructureHash, StringComparison.OrdinalIgnoreCase);
-
-        var newVersion = isNewVersion ? (latestVersion + 1) : latestVersion;
-
-        if (!isNewVersion)
+        // Multi-thread safety: serialize user-driven schema mutations per form.
+        lock (GetFormLock(formKey))
         {
-            _logger.LogInformation("Structure unchanged for {FormNumber}; keeping version v{Version}", parsed.FormNumber, newVersion);
-            return new SaveResult(
-                formKey,
-                parsed.FormTitle,
-                newVersion,
-                IsNewVersion: false,
-                PreviousVersion: latestVersion == 0 ? null : latestVersion,
-                RequiresTypeSetup: false,
-                RequiresColumnMapping: false,
-                UnmatchedNewColumnCount: 0,
-                PendingId: null);
-        }
+            EnsureFormMetaExists(
+                formNumber: formKey,
+                displayFormNumber: parsed.FormNumber,
+                displayFormTitle: parsed.FormTitle);
 
-        // Carry column types from previous version if possible (match by Path).
-        var unmatchedNewColumns = 0;
-        IReadOnlyList<ColumnDefinition> columnsWithTypes = parsed.Columns;
-        if (newVersion > 1)
-        {
-            var previous = TryLoadStructure(formKey, newVersion - 1);
-            if (previous is not null)
+            var (latestVersion, latestHash) = GetLatestVersionInfo(formKey);
+            var isNewVersion = latestVersion == 0 || !string.Equals(latestHash, parsed.StructureHash, StringComparison.OrdinalIgnoreCase);
+
+            var newVersion = isNewVersion ? (latestVersion + 1) : latestVersion;
+
+            if (!isNewVersion)
             {
-                var prevByPath = previous.Columns.ToDictionary(c => c.Path, StringComparer.Ordinal);
-                columnsWithTypes = parsed.Columns
-                    .Select(c =>
-                    {
-                        if (prevByPath.TryGetValue(c.Path, out var prev))
+                _logger.LogInformation("Structure unchanged for {FormNumber}; keeping version v{Version}", parsed.FormNumber, newVersion);
+                return new SaveResult(
+                    formKey,
+                    parsed.FormTitle,
+                    newVersion,
+                    IsNewVersion: false,
+                    PreviousVersion: latestVersion == 0 ? null : latestVersion,
+                    RequiresTypeSetup: false,
+                    RequiresColumnMapping: false,
+                    UnmatchedNewColumnCount: 0,
+                    PendingId: null);
+            }
+
+            // Carry column types from previous version if possible (match by Path).
+            var unmatchedNewColumns = 0;
+            IReadOnlyList<ColumnDefinition> columnsWithTypes = parsed.Columns;
+            if (newVersion > 1)
+            {
+                var previous = TryLoadStructure(formKey, newVersion - 1);
+                if (previous is not null)
+                {
+                    var prevByPath = previous.Columns.ToDictionary(c => c.Path, StringComparer.Ordinal);
+                    columnsWithTypes = parsed.Columns
+                        .Select(c =>
                         {
-                            return c with { Type = prev.Type };
-                        }
+                            if (prevByPath.TryGetValue(c.Path, out var prev))
+                            {
+                                return c with { Type = prev.Type };
+                            }
 
-                        unmatchedNewColumns++;
-                        return c;
-                    })
-                    .ToArray();
+                            unmatchedNewColumns++;
+                            return c;
+                        })
+                        .ToArray();
+                }
+                else
+                {
+                    unmatchedNewColumns = parsed.Columns.Count;
+                }
             }
-            else
+
+            var stored = parsed with
             {
-                unmatchedNewColumns = parsed.Columns.Count;
+                FormNumber = formKey,
+                TemplateFormNumber = string.Equals(formKey, parsed.FormNumber, StringComparison.OrdinalIgnoreCase)
+                    ? null
+                    : parsed.FormNumber,
+                Version = newVersion,
+                UploadedAtUtc = DateTime.UtcNow,
+                Columns = columnsWithTypes
+            };
+
+            // For the first version, require explicit type setup before committing the schema.
+            // This keeps the form out of the main list until the user confirms types.
+            if (newVersion == 1)
+            {
+                var pendingId = SavePendingInternal(stored, ms, previousVersion: 0);
+
+                _logger.LogInformation(
+                    "Staged pending upload {FormNumber} v{Version} as {PendingId} (requires type setup)",
+                    stored.FormNumber,
+                    stored.Version,
+                    pendingId);
+
+                return new SaveResult(
+                    formKey,
+                    stored.FormTitle,
+                    stored.Version,
+                    IsNewVersion: true,
+                    PreviousVersion: null,
+                    RequiresTypeSetup: true,
+                    RequiresColumnMapping: false,
+                    UnmatchedNewColumnCount: 0,
+                    PendingId: pendingId);
             }
-        }
 
-        var stored = parsed with
-        {
-            FormNumber = formKey,
-            TemplateFormNumber = string.Equals(formKey, parsed.FormNumber, StringComparison.OrdinalIgnoreCase)
-                ? null
-                : parsed.FormNumber,
-            Version = newVersion,
-            UploadedAtUtc = DateTime.UtcNow,
-            Columns = columnsWithTypes
-        };
+            // If this upload introduced new columns that can't be auto-matched by Path,
+            // do not create a new version yet. Stage it as a pending upload and require
+            // the user to confirm column mapping before committing.
+            var requiresColumnMapping = newVersion > 1 && unmatchedNewColumns > 0;
+            if (requiresColumnMapping)
+            {
+                var pendingId = SavePendingInternal(stored, ms, previousVersion: newVersion - 1);
 
-        // For the first version, require explicit type setup before committing the schema.
-        // This keeps the form out of the main list until the user confirms types.
-        if (newVersion == 1)
-        {
-            var pendingId = await SavePendingAsyncInternal(stored, ms, previousVersion: 0, ct);
+                _logger.LogInformation(
+                    "Staged pending upload {FormNumber} v{Version} as {PendingId} (unmatched columns: {Count})",
+                    stored.FormNumber,
+                    stored.Version,
+                    pendingId,
+                    unmatchedNewColumns);
 
-            _logger.LogInformation(
-                "Staged pending upload {FormNumber} v{Version} as {PendingId} (requires type setup)",
-                stored.FormNumber,
-                stored.Version,
-                pendingId);
-
-            return new SaveResult(
-                formKey,
-                stored.FormTitle,
-                stored.Version,
-                IsNewVersion: true,
-                PreviousVersion: null,
-                RequiresTypeSetup: true,
-                RequiresColumnMapping: false,
-                UnmatchedNewColumnCount: 0,
-                PendingId: pendingId);
-        }
-
-        // If this upload introduced new columns that can't be auto-matched by Path,
-        // do not create a new version yet. Stage it as a pending upload and require
-        // the user to confirm column mapping before committing.
-        var requiresColumnMapping = newVersion > 1 && unmatchedNewColumns > 0;
-        if (requiresColumnMapping)
-        {
-            var pendingId = await SavePendingAsyncInternal(stored, ms, previousVersion: newVersion - 1, ct);
-
-            _logger.LogInformation(
-                "Staged pending upload {FormNumber} v{Version} as {PendingId} (unmatched columns: {Count})",
-                stored.FormNumber,
-                stored.Version,
-                pendingId,
-                unmatchedNewColumns);
-
-            return new SaveResult(
-                formKey,
-                stored.FormTitle,
-                stored.Version,
-                IsNewVersion: true,
-                PreviousVersion: newVersion - 1,
-                RequiresTypeSetup: false,
-                RequiresColumnMapping: true,
-                UnmatchedNewColumnCount: unmatchedNewColumns,
-                PendingId: pendingId);
-        }
+                return new SaveResult(
+                    formKey,
+                    stored.FormTitle,
+                    stored.Version,
+                    IsNewVersion: true,
+                    PreviousVersion: newVersion - 1,
+                    RequiresTypeSetup: false,
+                    RequiresColumnMapping: true,
+                    UnmatchedNewColumnCount: unmatchedNewColumns,
+                    PendingId: pendingId);
+            }
 
             var formDir = GetFormDir(formKey);
             var versionDir = GetVersionDir(formKey, newVersion);
             Directory.CreateDirectory(formDir);
             Directory.CreateDirectory(versionDir);
 
-            // Save original file
             var originalPath = Path.Combine(versionDir, "original.xlsx");
             ms.Position = 0;
-            await using (var fs = File.Create(originalPath))
+            using (var fs = File.Create(originalPath))
             {
-                await ms.CopyToAsync(fs, ct);
+                ms.CopyTo(fs);
             }
 
-        var structureJson = JsonUtil.ToStableJson(stored);
-        await File.WriteAllTextAsync(Path.Combine(versionDir, "structure.json"), structureJson, ct);
+            var structureJson = JsonUtil.ToStableJson(stored);
+            File.WriteAllText(Path.Combine(versionDir, "structure.json"), structureJson);
 
-        _logger.LogInformation("Stored {FormNumber} v{Version} at {Dir}", formKey, newVersion, versionDir);
+            _logger.LogInformation("Stored {FormNumber} v{Version} at {Dir}", formKey, newVersion, versionDir);
 
-        return new SaveResult(
-            formKey,
-            parsed.FormTitle,
-            newVersion,
-            IsNewVersion: true,
+            return new SaveResult(
+                formKey,
+                parsed.FormTitle,
+                newVersion,
+                IsNewVersion: true,
                 PreviousVersion: newVersion > 1 ? newVersion - 1 : null,
                 RequiresTypeSetup: false,
-            RequiresColumnMapping: false,
-            UnmatchedNewColumnCount: unmatchedNewColumns,
-            PendingId: null);
+                RequiresColumnMapping: false,
+                UnmatchedNewColumnCount: unmatchedNewColumns,
+                PendingId: null);
+        }
     }
 
     public PendingUpload? TryLoadPending(string formNumber, string pendingId)
@@ -366,7 +383,7 @@ public sealed class FormStorage
         }
     }
 
-    public async Task CommitPendingAsync(string formNumber, string pendingId, FormStructure finalStructure, CancellationToken ct)
+    public Task CommitPendingAsync(string formNumber, string pendingId, FormStructure finalStructure, CancellationToken ct)
     {
         EnsureInitialized();
 
@@ -380,48 +397,54 @@ public sealed class FormStorage
             throw new ArgumentException("Structure does not match target form.");
         }
 
-        var pendingDir = GetPendingDir(formNumber, pendingId);
-        var metaPath = Path.Combine(pendingDir, "meta.json");
-        var originalPath = Path.Combine(pendingDir, "original.xlsx");
+        ct.ThrowIfCancellationRequested();
 
-        if (!Directory.Exists(pendingDir) || !File.Exists(metaPath) || !File.Exists(originalPath))
+        lock (GetFormLock(formNumber))
         {
-            throw new DirectoryNotFoundException("Pending upload not found.");
+            var pendingDir = GetPendingDir(formNumber, pendingId);
+            var metaPath = Path.Combine(pendingDir, "meta.json");
+            var originalPath = Path.Combine(pendingDir, "original.xlsx");
+
+            if (!Directory.Exists(pendingDir) || !File.Exists(metaPath) || !File.Exists(originalPath))
+            {
+                throw new DirectoryNotFoundException("Pending upload not found.");
+            }
+
+            var metaJson = File.ReadAllText(metaPath);
+            var meta = System.Text.Json.JsonSerializer.Deserialize<PendingMeta>(metaJson, JsonUtil.StableOptions)
+                       ?? throw new InvalidOperationException("Pending upload metadata is invalid.");
+
+            if (meta.IntendedVersion != finalStructure.Version)
+            {
+                throw new InvalidOperationException("Pending upload version does not match.");
+            }
+
+            var versionDir = GetVersionDir(formNumber, finalStructure.Version);
+            if (Directory.Exists(versionDir))
+            {
+                throw new InvalidOperationException($"Schema version already exists: v{finalStructure.Version}.");
+            }
+
+            Directory.CreateDirectory(GetFormDir(formNumber));
+            Directory.CreateDirectory(versionDir);
+
+            using (var src = File.OpenRead(originalPath))
+            using (var dst = File.Create(Path.Combine(versionDir, "original.xlsx")))
+            {
+                src.CopyTo(dst);
+            }
+
+            var stored = finalStructure with { UploadedAtUtc = DateTime.UtcNow };
+            var structureJson = JsonUtil.ToStableJson(stored);
+            File.WriteAllText(Path.Combine(versionDir, "structure.json"), structureJson);
+
+            // Remove pending after successful commit.
+            DeletePending(formNumber, pendingId);
+
+            _logger.LogInformation("Committed pending upload {FormNumber} v{Version} ({PendingId})", formNumber, stored.Version, pendingId);
         }
 
-        var metaJson = await File.ReadAllTextAsync(metaPath, ct);
-        var meta = System.Text.Json.JsonSerializer.Deserialize<PendingMeta>(metaJson, JsonUtil.StableOptions)
-                   ?? throw new InvalidOperationException("Pending upload metadata is invalid.");
-
-        if (meta.IntendedVersion != finalStructure.Version)
-        {
-            throw new InvalidOperationException("Pending upload version does not match.");
-        }
-
-        var versionDir = GetVersionDir(formNumber, finalStructure.Version);
-        if (Directory.Exists(versionDir))
-        {
-            throw new InvalidOperationException($"Schema version already exists: v{finalStructure.Version}.");
-        }
-
-        Directory.CreateDirectory(GetFormDir(formNumber));
-        Directory.CreateDirectory(versionDir);
-
-        // Copy original file from pending.
-        await using (var src = File.OpenRead(originalPath))
-        await using (var dst = File.Create(Path.Combine(versionDir, "original.xlsx")))
-        {
-            await src.CopyToAsync(dst, ct);
-        }
-
-        var stored = finalStructure with { UploadedAtUtc = DateTime.UtcNow };
-        var structureJson = JsonUtil.ToStableJson(stored);
-        await File.WriteAllTextAsync(Path.Combine(versionDir, "structure.json"), structureJson, ct);
-
-        // Remove pending after successful commit.
-        DeletePending(formNumber, pendingId);
-
-        _logger.LogInformation("Committed pending upload {FormNumber} v{Version} ({PendingId})", formNumber, stored.Version, pendingId);
+        return Task.CompletedTask;
     }
 
     public bool DeletePending(string formNumber, string pendingId)
@@ -439,15 +462,23 @@ public sealed class FormStorage
             return false;
         }
 
-        try
+        lock (GetFormLock(formNumber))
         {
-            Directory.Delete(dir, recursive: true);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to delete pending upload {FormNumber} ({PendingId})", formNumber, pendingId);
-            throw;
+            if (!Directory.Exists(dir))
+            {
+                return false;
+            }
+
+            try
+            {
+                Directory.Delete(dir, recursive: true);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete pending upload {FormNumber} ({PendingId})", formNumber, pendingId);
+                throw;
+            }
         }
     }
 
@@ -520,7 +551,7 @@ public sealed class FormStorage
         return deleted;
     }
 
-    public async Task SaveStructureAsync(string formNumber, int version, FormStructure structure, CancellationToken ct)
+    public Task SaveStructureAsync(string formNumber, int version, FormStructure structure, CancellationToken ct)
     {
         EnsureInitialized();
 
@@ -534,14 +565,21 @@ public sealed class FormStorage
             throw new ArgumentException("Structure does not match target form/version.");
         }
 
-        var versionDir = GetVersionDir(formNumber, version);
-        if (!Directory.Exists(versionDir))
+        ct.ThrowIfCancellationRequested();
+
+        lock (GetFormLock(formNumber))
         {
-            throw new DirectoryNotFoundException($"Schema version directory not found: {versionDir}");
+            var versionDir = GetVersionDir(formNumber, version);
+            if (!Directory.Exists(versionDir))
+            {
+                throw new DirectoryNotFoundException($"Schema version directory not found: {versionDir}");
+            }
+
+            var structureJson = JsonUtil.ToStableJson(structure);
+            File.WriteAllText(Path.Combine(versionDir, "structure.json"), structureJson);
         }
 
-        var structureJson = JsonUtil.ToStableJson(structure);
-        await File.WriteAllTextAsync(Path.Combine(versionDir, "structure.json"), structureJson, ct);
+        return Task.CompletedTask;
     }
 
     public string GetOriginalFilePath(string formNumber, int version)
@@ -564,17 +602,25 @@ public sealed class FormStorage
             return false;
         }
 
-        try
+        lock (GetFormLock(formNumber))
         {
-            Directory.Delete(versionDir, recursive: true);
-            TryDeleteDirectoryIfEmpty(GetFormDir(formNumber));
-            _logger.LogInformation("Deleted schema {FormNumber} v{Version}", formNumber, version);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to delete schema {FormNumber} v{Version}", formNumber, version);
-            throw;
+            if (!Directory.Exists(versionDir))
+            {
+                return false;
+            }
+
+            try
+            {
+                Directory.Delete(versionDir, recursive: true);
+                TryDeleteDirectoryIfEmpty(GetFormDir(formNumber));
+                _logger.LogInformation("Deleted schema {FormNumber} v{Version}", formNumber, version);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete schema {FormNumber} v{Version}", formNumber, version);
+                throw;
+            }
         }
     }
 
@@ -593,16 +639,24 @@ public sealed class FormStorage
             return false;
         }
 
-        try
+        lock (GetFormLock(formNumber))
         {
-            Directory.Delete(formDir, recursive: true);
-            _logger.LogInformation("Deleted schema form {FormNumber}", formNumber);
-            return true;
-        }
-        catch (Exception ex)
-        {
-            _logger.LogWarning(ex, "Failed to delete schema form {FormNumber}", formNumber);
-            throw;
+            if (!Directory.Exists(formDir))
+            {
+                return false;
+            }
+
+            try
+            {
+                Directory.Delete(formDir, recursive: true);
+                _logger.LogInformation("Deleted schema form {FormNumber}", formNumber);
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to delete schema form {FormNumber}", formNumber);
+                throw;
+            }
         }
     }
 
@@ -626,15 +680,30 @@ public sealed class FormStorage
             return false;
         }
 
-        var newDir = GetFormDir(newFormNumber);
-        if (Directory.Exists(newDir))
-        {
-            throw new InvalidOperationException($"Schema directory already exists for form '{newFormNumber}'.");
-        }
+        // Lock both keys in stable order to avoid deadlocks.
+        var first = string.Compare(oldFormNumber, newFormNumber, StringComparison.OrdinalIgnoreCase) <= 0
+            ? oldFormNumber
+            : newFormNumber;
+        var second = string.Equals(first, oldFormNumber, StringComparison.OrdinalIgnoreCase) ? newFormNumber : oldFormNumber;
 
-        Directory.Move(oldDir, newDir);
-        _logger.LogInformation("Renamed schema form {OldFormNumber} -> {NewFormNumber}", oldFormNumber, newFormNumber);
-        return true;
+        lock (GetFormLock(first))
+        lock (GetFormLock(second))
+        {
+            if (!Directory.Exists(oldDir))
+            {
+                return false;
+            }
+
+            var newDir = GetFormDir(newFormNumber);
+            if (Directory.Exists(newDir))
+            {
+                throw new InvalidOperationException($"Schema directory already exists for form '{newFormNumber}'.");
+            }
+
+            Directory.Move(oldDir, newDir);
+            _logger.LogInformation("Renamed schema form {OldFormNumber} -> {NewFormNumber}", oldFormNumber, newFormNumber);
+            return true;
+        }
     }
 
     private (int latestVersion, string? latestHash) GetLatestVersionInfo(string formNumber)
@@ -658,7 +727,7 @@ public sealed class FormStorage
 
     private string GetPendingDir(string formNumber, string pendingId) => GetSafeSubdir(GetPendingRootDir(formNumber), pendingId, nameof(pendingId));
 
-    private async Task<string> SavePendingAsyncInternal(FormStructure structure, MemoryStream originalXlsx, int previousVersion, CancellationToken ct)
+    private string SavePendingInternal(FormStructure structure, MemoryStream originalXlsx, int previousVersion)
     {
         var pendingId = Guid.NewGuid().ToString("n");
         var pendingDir = GetPendingDir(structure.FormNumber, pendingId);
@@ -672,16 +741,16 @@ public sealed class FormStorage
             IntendedVersion: structure.Version);
 
         var metaJson = JsonUtil.ToStableJson(meta);
-        await File.WriteAllTextAsync(Path.Combine(pendingDir, "meta.json"), metaJson, ct);
+        File.WriteAllText(Path.Combine(pendingDir, "meta.json"), metaJson);
 
         originalXlsx.Position = 0;
-        await using (var fs = File.Create(Path.Combine(pendingDir, "original.xlsx")))
+        using (var fs = File.Create(Path.Combine(pendingDir, "original.xlsx")))
         {
-            await originalXlsx.CopyToAsync(fs, ct);
+            originalXlsx.CopyTo(fs);
         }
 
         var structureJson = JsonUtil.ToStableJson(structure);
-        await File.WriteAllTextAsync(Path.Combine(pendingDir, "structure.json"), structureJson, ct);
+        File.WriteAllText(Path.Combine(pendingDir, "structure.json"), structureJson);
 
         return pendingId;
     }
@@ -778,12 +847,15 @@ public sealed class FormStorage
 
         EnsureInitialized();
 
-        var formDir = GetFormDir(formNumber);
-        Directory.CreateDirectory(formDir);
+        lock (GetFormLock(formNumber))
+        {
+            var formDir = GetFormDir(formNumber);
+            Directory.CreateDirectory(formDir);
 
-        var path = GetFormMetaPath(formNumber);
-        var json = JsonUtil.ToStableJson(meta);
-        File.WriteAllText(path, json);
+            var path = GetFormMetaPath(formNumber);
+            var json = JsonUtil.ToStableJson(meta);
+            File.WriteAllText(path, json);
+        }
     }
 
     private void EnsureFormMetaExists(string formNumber, string displayFormNumber, string displayFormTitle)
@@ -799,12 +871,20 @@ public sealed class FormStorage
             return;
         }
 
-        SaveFormMeta(formNumber, new FormMeta
+        lock (GetFormLock(formNumber))
         {
-            DisplayFormNumber = displayFormNumber,
-            DisplayFormTitle = displayFormTitle,
-            UpdatedAtUtc = DateTime.UtcNow
-        });
+            if (File.Exists(path))
+            {
+                return;
+            }
+
+            SaveFormMeta(formNumber, new FormMeta
+            {
+                DisplayFormNumber = displayFormNumber,
+                DisplayFormTitle = displayFormTitle,
+                UpdatedAtUtc = DateTime.UtcNow
+            });
+        }
     }
 
     private string GetFormMetaPath(string formNumber)
