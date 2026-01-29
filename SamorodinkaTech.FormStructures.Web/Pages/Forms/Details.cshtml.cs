@@ -26,6 +26,8 @@ public class DetailsModel : PageModel
     public IReadOnlyList<int> Versions { get; private set; } = Array.Empty<int>();
     public IReadOnlyList<FormDataUpload> LatestUploads { get; private set; } = Array.Empty<FormDataUpload>();
 
+    public IReadOnlyList<VersionSummary> VersionSummaries { get; private set; } = Array.Empty<VersionSummary>();
+
     public string DisplayFormNumber => Meta?.DisplayFormNumber ?? FormNumber;
     public string DisplayFormTitle => Meta?.DisplayFormTitle ?? (Latest?.FormTitle ?? FormNumber);
 
@@ -51,9 +53,7 @@ public class DetailsModel : PageModel
         }
 
         FormNumber = formNumber;
-        Versions = _storage.ListVersions(FormNumber);
-        Latest = _storage.TryGetLatestStructure(FormNumber);
-        Meta = _storage.TryLoadFormMeta(FormNumber);
+        LoadPageData();
         EditMeta = editMeta;
 
         if (Latest is null)
@@ -106,6 +106,7 @@ public class DetailsModel : PageModel
         {
             EditMeta = true;
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
+            VersionSummaries = BuildVersionSummaries(FormNumber, Versions);
             return Page();
         }
 
@@ -142,6 +143,7 @@ public class DetailsModel : PageModel
         {
             ModelState.AddModelError(nameof(DataUpload), "Please choose a .xlsx file.");
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
+            VersionSummaries = BuildVersionSummaries(FormNumber, Versions);
             return Page();
         }
 
@@ -166,6 +168,7 @@ public class DetailsModel : PageModel
                 ExceptionUtil.FormatExceptionChain(ex));
             ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
+            VersionSummaries = BuildVersionSummaries(FormNumber, Versions);
             return Page();
         }
         catch (Exception ex)
@@ -177,6 +180,7 @@ public class DetailsModel : PageModel
                 ExceptionUtil.FormatExceptionChain(ex));
             ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
+            VersionSummaries = BuildVersionSummaries(FormNumber, Versions);
             return Page();
         }
     }
@@ -202,6 +206,7 @@ public class DetailsModel : PageModel
         {
             ModelState.AddModelError(nameof(SchemaUpload), "Please choose a .xlsx file.");
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
+            VersionSummaries = BuildVersionSummaries(FormNumber, Versions);
             return Page();
         }
 
@@ -248,6 +253,7 @@ public class DetailsModel : PageModel
                 ExceptionUtil.FormatExceptionChain(ex));
             ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
+            VersionSummaries = BuildVersionSummaries(FormNumber, Versions);
             return Page();
         }
         catch (Exception ex)
@@ -259,13 +265,59 @@ public class DetailsModel : PageModel
                 ExceptionUtil.FormatExceptionChain(ex));
             ModelState.AddModelError(string.Empty, ExceptionUtil.FormatExceptionChain(ex));
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
+            VersionSummaries = BuildVersionSummaries(FormNumber, Versions);
             return Page();
         }
     }
 
+    private void LoadPageData()
+    {
+        Versions = _storage.ListVersions(FormNumber);
+        Latest = _storage.TryGetLatestStructure(FormNumber);
+        Meta = _storage.TryLoadFormMeta(FormNumber);
+
+        if (Latest is not null)
+        {
+            LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
+        }
+
+        VersionSummaries = BuildVersionSummaries(FormNumber, Versions);
+    }
+
+    private IReadOnlyList<VersionSummary> BuildVersionSummaries(string formNumber, IReadOnlyList<int> versions)
+    {
+        var summaries = new List<VersionSummary>(versions.Count);
+        foreach (var v in versions)
+        {
+            var s = _storage.TryLoadStructure(formNumber, v);
+            if (s is null)
+            {
+                continue;
+            }
+
+            summaries.Add(new VersionSummary(
+                Version: v,
+                UploadedAtUtc: s.UploadedAtUtc,
+                ColumnsCount: s.Columns.Count,
+                FormTitle: s.FormTitle));
+        }
+
+        return summaries
+            .OrderByDescending(x => x.Version)
+            .ToArray();
+    }
+
+    public sealed record VersionSummary(int Version, DateTime UploadedAtUtc, int ColumnsCount, string FormTitle);
+
     public IActionResult OnGetDownloadData(string formNumber, int version, string uploadId)
     {
         if (string.IsNullOrWhiteSpace(formNumber) || version <= 0 || string.IsNullOrWhiteSpace(uploadId))
+        {
+            return NotFound();
+        }
+
+        var structure = _storage.TryLoadStructure(formNumber, version);
+        if (structure is null)
         {
             return NotFound();
         }
@@ -276,7 +328,7 @@ public class DetailsModel : PageModel
             return NotFound();
         }
 
-        var downloadName = $"{formNumber}-v{version}-{uploadId}.xlsx";
+        var downloadName = DownloadFileName.ForDataUpload(structure, version, uploadId);
         return PhysicalFile(path, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", downloadName);
     }
 
@@ -304,13 +356,19 @@ public class DetailsModel : PageModel
             return NotFound();
         }
 
+        var structure = _storage.TryLoadStructure(formNumber, version);
+        if (structure is null)
+        {
+            return NotFound();
+        }
+
         var path = _storage.GetOriginalFilePath(formNumber, version);
         if (!System.IO.File.Exists(path))
         {
             return NotFound();
         }
 
-        var downloadName = $"{formNumber}-v{version}.xlsx";
+        var downloadName = DownloadFileName.ForSchema(structure, version);
         return PhysicalFile(path, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", downloadName);
     }
 

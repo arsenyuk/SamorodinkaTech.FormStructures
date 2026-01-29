@@ -72,77 +72,218 @@
 }
 
 <div class="row g-3">
-    <div class="col-md-4">
-        <div class="card">
-            <div class="card-body">
-                <h2 class="h6">Upload new schema version</h2>
-                <form method="post" enctype="multipart/form-data" asp-page-handler="UploadSchema" asp-route-formNumber="@Model.FormNumber">
-                    <div class="mb-2">
-                        <input class="form-control" type="file" asp-for="SchemaUpload" accept=".xlsx" />
-                        <div class="form-text">Upload an empty template (.xlsx) to create a new schema version.</div>
-                        <div class="form-text">Note: the form number inside the Excel file may be different; the schema will still be saved under this index (URL): <code>@Model.FormNumber</code>.</div>
-                        <span class="text-danger" asp-validation-for="SchemaUpload"></span>
-                    </div>
-                    <button class="btn btn-primary btn-sm" type="submit">Upload & Analyze</button>
-                </form>
-            </div>
-        </div>
+    <div class="col-12">
+        <ul class="nav nav-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">Overview</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-versions" type="button" role="tab">Versions</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-schema" type="button" role="tab">Schema</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-uploads" type="button" role="tab">Uploads</button>
+            </li>
+        </ul>
 
-        <div class="card">
-            <div class="card-body">
-                <div class="d-flex justify-content-between align-items-center">
-                    <h2 class="h6 mb-0">Versions</h2>
-                    <form method="post"
-                          asp-page-handler="DeleteForm"
-                          asp-route-formNumber="@Model.FormNumber"
-                          onsubmit="return confirm('Delete the whole form, all schema versions, and all uploaded data?');">
-                        <button type="submit" class="btn btn-outline-danger btn-sm">Delete form</button>
-                    </form>
+        <div class="tab-content pt-3">
+            <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
+                <div class="row g-3">
+                    <div class="col-lg-4">
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h2 class="h6 mb-0">Latest schema</h2>
+                                    <a class="btn btn-primary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(Model.Latest!.Version)">Open v@(Model.Latest!.Version)</a>
+                                </div>
+                                <div class="text-muted mt-2">
+                                    <small>Uploaded (UTC): <code>@Model.Latest!.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></small>
+                                </div>
+                                <div class="text-muted"><small>Columns: <code>@Model.Latest!.Columns.Count</code></small></div>
+                                <div class="text-muted"><small>Hash: <code>@Model.Latest!.StructureHash</code></small></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-lg-4">
+                        <div class="card">
+                            <div class="card-body">
+                                <h2 class="h6">Data</h2>
+                                <div class="text-muted"><small>Latest uploads: <code>@Model.LatestUploads.Count</code></small></div>
+                                <div class="mt-3 d-flex gap-2">
+                                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/aggregated">Aggregated</a>
+                                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">All uploads</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-lg-4">
+                        <div class="card">
+                            <div class="card-body">
+                                <h2 class="h6">Actions</h2>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <a class="btn btn-outline-secondary btn-sm" href="?editMeta=true">Edit form info</a>
+                                    <form method="post"
+                                          asp-page-handler="DeleteForm"
+                                          asp-route-formNumber="@Model.FormNumber"
+                                          onsubmit="return confirm('Delete the whole form, all schema versions, and all uploaded data?');">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm">Delete form</button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </div>
-                @if (Model.Versions.Count == 0)
+
+                <div class="accordion mt-3" id="overviewAccordion">
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="headingUpload">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseUpload">Upload new schema version</button>
+                        </h2>
+                        <div id="collapseUpload" class="accordion-collapse collapse" data-bs-parent="#overviewAccordion">
+                            <div class="accordion-body">
+                                <form method="post" enctype="multipart/form-data" asp-page-handler="UploadSchema" asp-route-formNumber="@Model.FormNumber">
+                                    <div class="mb-2">
+                                        <input class="form-control" type="file" asp-for="SchemaUpload" accept=".xlsx" />
+                                        <div class="form-text">Upload an empty template (.xlsx) to create a new schema version.</div>
+                                        <div class="form-text">Note: the form number inside the Excel file may be different; the schema will still be saved under this index (URL): <code>@Model.FormNumber</code>.</div>
+                                        <span class="text-danger" asp-validation-for="SchemaUpload"></span>
+                                    </div>
+                                    <button class="btn btn-primary btn-sm" type="submit">Upload & Analyze</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-pane fade" id="tab-versions" role="tabpanel">
+                @if (Model.VersionSummaries.Count == 0)
                 {
                     <div class="text-muted">No versions.</div>
                 }
                 else
                 {
-                    <div class="list-group">
-                        @foreach (var v in Model.Versions)
+                    <table class="table table-sm align-middle">
+                        <thead>
+                        <tr>
+                            <th>Version</th>
+                            <th>Uploaded (UTC)</th>
+                            <th>Columns</th>
+                            <th>Title (from file)</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var v in Model.VersionSummaries)
                         {
-                            <div class="list-group-item d-flex justify-content-between align-items-center">
-                                <div><code>v@(v)</code></div>
-                                <div class="d-flex gap-2">
-                                    <a class="btn btn-primary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(v)">Open</a>
-                                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(v)?editTypes=true#types">Edit</a>
-                                    <a class="btn btn-outline-primary btn-sm" href="?handler=Download&formNumber=@Uri.EscapeDataString(Model.FormNumber)&version=@v">Download</a>
-                                    <a class="btn btn-outline-secondary btn-sm" href="?handler=Structure&formNumber=@Uri.EscapeDataString(Model.FormNumber)&version=@v" target="_blank">JSON</a>
-                                    <form method="post"
-                                          asp-page-handler="DeleteVersion"
-                                          asp-route-formNumber="@Model.FormNumber"
-                                          asp-route-version="@v"
-                                          onsubmit="return confirm('Delete this schema version and all uploaded data for it?');">
-                                        <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
-                                    </form>
-                                </div>
-                            </div>
+                            var isLatest = Model.Latest is not null && v.Version == Model.Latest.Version;
+                            <tr>
+                                <td class="@(isLatest ? "fw-semibold" : string.Empty)">
+                                    <a href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(v.Version)"><code>v@(v.Version)</code></a>
+                                    @if (isLatest)
+                                    {
+                                        <span class="badge text-bg-primary ms-2">latest</span>
+                                    }
+                                </td>
+                                <td><code>@v.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                                <td><code>@v.ColumnsCount</code></td>
+                                <td class="text-muted"><small>@v.FormTitle</small></td>
+                                <td class="text-end">
+                                    <div class="btn-group">
+                                        <a class="btn btn-primary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(v.Version)">Open</a>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button>
+                                        <ul class="dropdown-menu dropdown-menu-end">
+                                            <li><a class="dropdown-item" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(v.Version)?editTypes=true#types">Edit types</a></li>
+                                            <li><a class="dropdown-item" href="?handler=Download&formNumber=@Uri.EscapeDataString(Model.FormNumber)&version=@(v.Version)">Download .xlsx</a></li>
+                                            <li><a class="dropdown-item" href="?handler=Structure&formNumber=@Uri.EscapeDataString(Model.FormNumber)&version=@(v.Version)" target="_blank">Open JSON</a></li>
+                                            <li><hr class="dropdown-divider" /></li>
+                                            <li>
+                                                <form method="post"
+                                                      asp-page-handler="DeleteVersion"
+                                                      asp-route-formNumber="@Model.FormNumber"
+                                                      asp-route-version="@(v.Version)"
+                                                      onsubmit="return confirm('Delete this schema version and all uploaded data for it?');">
+                                                    <button type="submit" class="dropdown-item text-danger">Delete version</button>
+                                                </form>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </td>
+                            </tr>
                         }
-                    </div>
+                        </tbody>
+                    </table>
                 }
             </div>
-        </div>
 
-        <div class="card mt-3">
-            <div class="card-body">
-                <h2 class="h6">Schema hash</h2>
-                <code>@Model.Latest.StructureHash</code>
+            <div class="tab-pane fade" id="tab-schema" role="tabpanel">
+                <div class="accordion" id="schemaAccordion">
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="headingHeader">
+                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseHeader">Header structure</button>
+                        </h2>
+                        <div id="collapseHeader" class="accordion-collapse collapse show" data-bs-parent="#schemaAccordion">
+                            <div class="accordion-body">
+                                @if (Model.Latest!.Header.Count == 0)
+                                {
+                                    <div class="text-muted">No header nodes.</div>
+                                }
+                                else
+                                {
+                                    @RenderNodes(Model.Latest!.Header)
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="headingColumns">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseColumns">Columns</button>
+                        </h2>
+                        <div id="collapseColumns" class="accordion-collapse collapse" data-bs-parent="#schemaAccordion">
+                            <div class="accordion-body">
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <thead>
+                                        <tr>
+                                            <th class="text-end">#</th>
+                                            <th class="text-end">№</th>
+                                            <th>Name</th>
+                                            <th>Group</th>
+                                        </tr>
+                                        </thead>
+                                        <tbody>
+                                        @foreach (var c in Model.Latest!.Columns)
+                                        {
+                                            var groupPath = c.Path;
+                                            var groupSep = groupPath.LastIndexOf(" / ", StringComparison.Ordinal);
+                                            if (groupSep > 0)
+                                            {
+                                                groupPath = groupPath.Substring(0, groupSep);
+                                            }
+
+                                            <tr>
+                                                <td class="text-end"><code>@c.Index</code></td>
+                                                <td class="text-end">@if (!string.IsNullOrWhiteSpace(c.ColumnNumber)) { <code>@c.ColumnNumber</code> }</td>
+                                                <td>@c.Name</td>
+                                                <td class="text-muted"><small>@groupPath</small></td>
+                                            </tr>
+                                        }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
-        </div>
 
-        <div class="card mt-3">
-            <div class="card-body">
-                <h2 class="h6">Latest data uploads</h2>
-
-                <div class="mb-2">
-                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/aggregated">Aggregated data</a>
+            <div class="tab-pane fade" id="tab-uploads" role="tabpanel">
+                <div class="d-flex gap-2 mb-3">
+                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/aggregated">Aggregated</a>
                     <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">All uploads</a>
                 </div>
 
@@ -152,78 +293,43 @@
                 }
                 else
                 {
-                    <div class="list-group">
-                        @foreach (var u in Model.LatestUploads)
-                        {
-                            var fileHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{u.FormVersion}/{Uri.EscapeDataString(u.UploadId)}/file";
-                            <div class="list-group-item">
-                                <div class="d-flex justify-content-between align-items-center">
-                                    <div>
-                                        <div><small class="text-muted">UTC:</small> <code>@u.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></div>
-                                        <div><small class="text-muted">Rows:</small> <code>@u.RowCount</code></div>
-                                    </div>
-                                    <div class="d-flex gap-2">
-                                        <a class="btn btn-outline-primary btn-sm" href="@fileHref">File</a>
-                                    </div>
-                                </div>
-                                <div class="text-muted"><small>@u.OriginalFileName</small></div>
-                            </div>
-                        }
-                    </div>
-                }
-            </div>
-        </div>
-    </div>
-
-    <div class="col-md-8">
-        <div class="card">
-            <div class="card-body">
-                <h2 class="h6">Header structure</h2>
-
-                @if (Model.Latest.Header.Count == 0)
-                {
-                    <div class="text-muted">No header nodes.</div>
-                }
-                else
-                {
-                    @RenderNodes(Model.Latest.Header)
-                }
-            </div>
-        </div>
-
-        <div class="card mt-3">
-            <div class="card-body">
-                <h2 class="h6">Columns</h2>
-                <div class="table-responsive">
-                    <table class="table table-sm mb-0">
+                    <table class="table table-sm align-middle">
                         <thead>
                         <tr>
-                            <th class="text-end">#</th>
-                            <th class="text-end">№</th>
-                            <th>Name</th>
-                            <th>Group</th>
+                            <th>Uploaded (UTC)</th>
+                            <th>Rows</th>
+                            <th>Original file</th>
+                            <th class="text-end">Actions</th>
                         </tr>
                         </thead>
                         <tbody>
-                        @foreach (var c in Model.Latest.Columns)
+                        @foreach (var u in Model.LatestUploads)
                         {
-                            var groupPath = c.Path;
-                            var groupSep = groupPath.LastIndexOf(" / ", StringComparison.Ordinal);
-                            if (groupSep > 0)
-                            {
-                                groupPath = groupPath.Substring(0, groupSep);
-                            }
+                            var dataHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{u.FormVersion}/{Uri.EscapeDataString(u.UploadId)}";
+                            var fileHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{u.FormVersion}/{Uri.EscapeDataString(u.UploadId)}/file";
+                            var downloadHref = $"?handler=DownloadData&formNumber={Uri.EscapeDataString(Model.FormNumber)}&version={u.FormVersion}&uploadId={Uri.EscapeDataString(u.UploadId)}";
+                            var jsonHref = $"?handler=DataJson&formNumber={Uri.EscapeDataString(Model.FormNumber)}&version={u.FormVersion}&uploadId={Uri.EscapeDataString(u.UploadId)}";
 
                             <tr>
-                                <td class="text-end"><code>@c.Index</code></td>
-                                <td class="text-end">@if (!string.IsNullOrWhiteSpace(c.ColumnNumber)) { <code>@c.ColumnNumber</code> }</td>
-                                <td>@c.Name</td>
-                                <td class="text-muted"><small>@groupPath</small></td>
+                                <td><code>@u.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                                <td><code>@u.RowCount</code></td>
+                                <td class="text-muted"><small>@u.OriginalFileName</small></td>
+                                <td class="text-end">
+                                    <div class="btn-group">
+                                        <a class="btn btn-outline-primary btn-sm" href="@dataHref">Data</a>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button>
+                                        <ul class="dropdown-menu dropdown-menu-end">
+                                            <li><a class="dropdown-item" href="@fileHref">File details</a></li>
+                                            <li><a class="dropdown-item" href="@downloadHref">Download .xlsx</a></li>
+                                            <li><a class="dropdown-item" href="@jsonHref" target="_blank">Open JSON</a></li>
+                                        </ul>
+                                    </div>
+                                </td>
                             </tr>
                         }
                         </tbody>
                     </table>
-                </div>
+                }
             </div>
         </div>
     </div>
@@ -260,4 +366,35 @@
 
         return ul;
     }
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            function activateFromHash() {
+                var hash = window.location.hash;
+                if (!hash) return;
+
+                var btn = document.querySelector('button[data-bs-toggle="tab"][data-bs-target="' + hash + '"]');
+                if (!btn) return;
+
+                if (window.bootstrap && window.bootstrap.Tab) {
+                    var tab = new window.bootstrap.Tab(btn);
+                    tab.show();
+                } else {
+                    btn.click();
+                }
+            }
+
+            document.addEventListener('shown.bs.tab', function (e) {
+                var target = e.target && e.target.getAttribute && e.target.getAttribute('data-bs-target');
+                if (target && target.startsWith('#')) {
+                    history.replaceState(null, '', target);
+                }
+            });
+
+            window.addEventListener('hashchange', activateFromHash);
+            activateFromHash();
+        })();
+    </script>
 }

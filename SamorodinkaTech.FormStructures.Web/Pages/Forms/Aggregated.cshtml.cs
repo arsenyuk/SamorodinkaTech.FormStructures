@@ -162,28 +162,8 @@ public class AggregatedModel : PageModel
         workbook.SaveAs(ms);
         var bytes = ms.ToArray();
 
-        var baseName = !string.IsNullOrWhiteSpace(Structure.FormTitle)
-            ? ToSafeFileName(Structure.FormTitle)
-            : $"form-{FormNumber}";
-
-        var downloadName = $"{baseName}-aggregated.xlsx";
+        var downloadName = DownloadFileName.ForAggregated(Structure, Version);
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", downloadName);
-    }
-
-    private static string ToSafeFileName(string value)
-    {
-        var s = value.Trim();
-        if (s.Length == 0)
-        {
-            return "export";
-        }
-
-        foreach (var ch in Path.GetInvalidFileNameChars())
-        {
-            s = s.Replace(ch, '_');
-        }
-
-        return s.Length == 0 ? "export" : s;
     }
 
     private IActionResult? TryLoad(

@@ -104,6 +104,7 @@ public class PendingModel : PageModel
         var chosen = MapEdits
             .Select(e => e.FromPath)
             .Where(p => !string.IsNullOrWhiteSpace(p))
+            .Select(p => p!)
             .ToArray();
 
         var duplicates = chosen
@@ -197,7 +198,7 @@ public class PendingModel : PageModel
     public sealed class ColumnMapEditRow
     {
         public string NewPath { get; set; } = string.Empty;
-        public string FromPath { get; set; } = string.Empty;
+        public string? FromPath { get; set; }
         public ColumnType Type { get; set; } = ColumnType.String;
     }
 }

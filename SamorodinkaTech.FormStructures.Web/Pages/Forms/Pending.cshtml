@@ -67,6 +67,12 @@ else
                 {
                     var newPath = Model.MapEdits[i].NewPath;
                     var newCol = Model.PendingUpload.Structure.Columns.FirstOrDefault(c => string.Equals(c.Path, newPath, StringComparison.Ordinal));
+                    var newLeafName = newPath;
+                    var newLeafSep = newPath.LastIndexOf(" / ", StringComparison.Ordinal);
+                    if (newLeafSep >= 0 && newLeafSep + 3 < newPath.Length)
+                    {
+                        newLeafName = newPath.Substring(newLeafSep + 3);
+                    }
                     var groupPath = string.Empty;
                     var groupSep = newPath.LastIndexOf(" / ", StringComparison.Ordinal);
                     if (groupSep > 0)
@@ -76,7 +82,7 @@ else
 
                     <tr>
                         <td>
-                            <div>@(newCol?.Name ?? newPath)</div>
+                            <div>@(!string.IsNullOrWhiteSpace(newCol?.Name) ? newCol!.Name : newLeafName)</div>
                             <div class="text-muted">
                                 <small>
                                     @if (!string.IsNullOrWhiteSpace(newCol?.ColumnNumber))
@@ -96,6 +102,12 @@ else
                                 <option value="">(none)</option>
                                 @foreach (var oldCol in Model.PreviousStructure.Columns.OrderBy(c => c.Index))
                                 {
+                                    var oldLeafName = oldCol.Path;
+                                    var oldLeafSep = oldCol.Path.LastIndexOf(" / ", StringComparison.Ordinal);
+                                    if (oldLeafSep >= 0 && oldLeafSep + 3 < oldCol.Path.Length)
+                                    {
+                                        oldLeafName = oldCol.Path.Substring(oldLeafSep + 3);
+                                    }
                                     var oldGroupPath = string.Empty;
                                     var oldGroupSep = oldCol.Path.LastIndexOf(" / ", StringComparison.Ordinal);
                                     if (oldGroupSep > 0)
@@ -103,13 +115,15 @@ else
                                         oldGroupPath = oldCol.Path.Substring(0, oldGroupSep);
                                     }
 
+                                    var oldName = !string.IsNullOrWhiteSpace(oldCol.Name) ? oldCol.Name : oldLeafName;
+
                                     if (!string.IsNullOrWhiteSpace(oldCol.ColumnNumber))
                                     {
-                                        <option value="@oldCol.Path">№ @oldCol.ColumnNumber · @oldCol.Name@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
+                                        <option value="@oldCol.Path">№ @oldCol.ColumnNumber · @oldName@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
                                     }
                                     else
                                     {
-                                        <option value="@oldCol.Path">@oldCol.Name@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
+                                        <option value="@oldCol.Path">@oldName@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
                                     }
                                 }
                             </select>

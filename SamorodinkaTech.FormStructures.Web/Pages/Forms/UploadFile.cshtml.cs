@@ -7,10 +7,12 @@ namespace SamorodinkaTech.FormStructures.Web.Pages.Forms;
 
 public class UploadFileModel : PageModel
 {
+    private readonly FormStorage _formStorage;
     private readonly FormDataStorage _dataStorage;
 
-    public UploadFileModel(FormDataStorage dataStorage)
+    public UploadFileModel(FormStorage formStorage, FormDataStorage dataStorage)
     {
+        _formStorage = formStorage;
         _dataStorage = dataStorage;
     }
 
@@ -63,13 +65,19 @@ public class UploadFileModel : PageModel
             return NotFound();
         }
 
+        var structure = _formStorage.TryLoadStructure(formNumber, version);
+        if (structure is null)
+        {
+            return NotFound();
+        }
+
         var path = _dataStorage.GetOriginalFilePath(formNumber, version, uploadId);
         if (!System.IO.File.Exists(path))
         {
             return NotFound();
         }
 
-        var downloadName = $"{formNumber}-v{version}-{uploadId}.xlsx";
+        var downloadName = DownloadFileName.ForDataUpload(structure, version, uploadId);
         return PhysicalFile(path, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", downloadName);
     }
 
