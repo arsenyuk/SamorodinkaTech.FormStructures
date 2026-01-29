@@ -24,6 +24,8 @@ public class PendingModel : PageModel
     public FormStorage.PendingUpload? PendingUpload { get; private set; }
     public FormStructure? PreviousStructure { get; private set; }
 
+    public string? MappingWarning { get; private set; }
+
     [BindProperty]
     public List<ColumnMapEditRow> MapEdits { get; set; } = new();
 
@@ -65,6 +67,8 @@ public class PendingModel : PageModel
             })
             .ToList();
 
+        SetWarningFromEdits();
+
         return Page();
     }
 
@@ -94,6 +98,8 @@ public class PendingModel : PageModel
         }
 
         var prevByPath = PreviousStructure.Columns.ToDictionary(c => c.Path, StringComparer.Ordinal);
+
+        SetWarningFromEdits();
 
         var chosen = MapEdits
             .Select(e => e.FromPath)
@@ -166,6 +172,14 @@ public class PendingModel : PageModel
             ModelState.AddModelError(string.Empty, $"Failed to create new schema version from pending upload. {ExceptionUtil.FormatExceptionChain(ex)}");
             return Page();
         }
+    }
+
+    private void SetWarningFromEdits()
+    {
+        var mappedCount = MapEdits.Count(e => !string.IsNullOrWhiteSpace(e.FromPath));
+        MappingWarning = mappedCount == 0
+            ? "Warning: no columns are mapped from the previous version. You can still save, but all columns will use the selected 'Type (if unmapped)'."
+            : null;
     }
 
     public IActionResult OnPostCancel(string formNumber, string pendingId)

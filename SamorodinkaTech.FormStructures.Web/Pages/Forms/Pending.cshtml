@@ -29,6 +29,11 @@
 
 <div class="text-danger" asp-validation-summary="All"></div>
 
+@if (Model.MappingWarning is string warning)
+{
+    <div class="alert alert-warning">@warning</div>
+}
+
 @if (Model.PendingUpload is null)
 {
     <div class="alert alert-warning">Pending upload not found.</div>
