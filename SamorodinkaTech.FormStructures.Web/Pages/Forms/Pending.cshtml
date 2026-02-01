@@ -48,6 +48,58 @@ else
         New schema version will be created only after you click <strong>Save mapping</strong>.
     </div>
 
+    @if (Model.PendingReferenceBooks.Count > 0)
+    {
+        <div class="alert alert-secondary">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <strong>Reference books</strong>
+                    <span class="text-muted">(found: @Model.PendingReferenceBooks.Count)</span>
+                </div>
+                <a class="btn btn-outline-secondary btn-sm" href="/Directories">Open list</a>
+            </div>
+            <div class="small text-muted mt-1">
+                Reference books are extracted from Excel Data Validation (List) pointing to a range.
+            </div>
+        </div>
+
+        <div class="table-responsive mb-3">
+            <table class="table table-sm table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th>Reference book</th>
+                        <th>Source</th>
+                        <th class="text-end" style="width: 120px;">Values</th>
+                        <th style="width: 45%;">Example</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var b in Model.PendingReferenceBooks)
+                {
+                    var source = !string.IsNullOrWhiteSpace(b.SourceSheet) && !string.IsNullOrWhiteSpace(b.SourceRange)
+                        ? $"{b.SourceSheet}!{b.SourceRange}"
+                        : b.SourceFormula;
+                    var preview = string.Join(", ", b.Values.Take(5));
+                    <tr>
+                        <td>
+                            <a asp-page="/Directories/PendingDetails"
+                               asp-route-formNumber="@Model.FormNumber"
+                               asp-route-pendingId="@Model.PendingId"
+                               asp-route-id="@b.Id">@b.Title</a>
+                        </td>
+                        <td>
+                            <div>@source</div>
+                            <div class="text-muted small">Applied to: @b.AppliedTo.Count</div>
+                        </td>
+                        <td class="text-end">@b.Values.Count</td>
+                        <td class="text-muted small">@preview@if (b.Values.Count > 5) { <text>…</text> }</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
     <form method="post" asp-page-handler="SaveMapping">
         <input type="hidden" name="formNumber" value="@Model.FormNumber" />
         <input type="hidden" name="pendingId" value="@Model.PendingId" />
@@ -87,7 +139,7 @@ else
                                 <small>
                                     @if (!string.IsNullOrWhiteSpace(newCol?.ColumnNumber))
                                     {
-                                        <text>№ <code>@newCol.ColumnNumber</code></text>
+                                        <text>No. <code>@newCol.ColumnNumber</code></text>
                                     }
                                     @if (!string.IsNullOrWhiteSpace(groupPath))
                                     {
@@ -119,7 +171,7 @@ else
 
                                     if (!string.IsNullOrWhiteSpace(oldCol.ColumnNumber))
                                     {
-                                        <option value="@oldCol.Path">№ @oldCol.ColumnNumber · @oldName@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
+                                        <option value="@oldCol.Path">No. @oldCol.ColumnNumber · @oldName@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
                                     }
                                     else
                                     {

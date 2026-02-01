@@ -287,7 +287,7 @@
             var meta = new TagBuilder("span");
             meta.AddCssClass("text-muted");
             meta.AddCssClass("ms-2");
-            meta.InnerHtml.Append($"(r{n.RowStart}-{n.RowEnd}, c{n.ColStart}-{n.ColEnd})");
+            meta.InnerHtml.Append($"(r{n.RowStart}, c{n.ColStart})");
 
             li.InnerHtml.AppendHtml(label);
             li.InnerHtml.AppendHtml(meta);

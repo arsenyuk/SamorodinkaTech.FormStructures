@@ -1,3 +1,4 @@
+using System.Reflection;
 using System.Text.RegularExpressions;
 using ClosedXML.Excel;
 using SamorodinkaTech.FormStructures.Web.Models;
@@ -197,6 +198,251 @@ public sealed class ExcelFormParser
         }
     }
 
+    public IReadOnlyList<ReferenceBook> ExtractReferenceBooks(Stream xlsxStream)
+    {
+        try
+        {
+            using var workbook = new XLWorkbook(xlsxStream);
+
+            var bySource = new Dictionary<string, MutableReferenceBook>(StringComparer.OrdinalIgnoreCase);
+
+            foreach (var ws in workbook.Worksheets)
+            {
+                foreach (var dv in ws.DataValidations)
+                {
+                    if (dv.AllowedValues != XLAllowedValues.List)
+                    {
+                        continue;
+                    }
+
+                    var formula = (GetValidationFormula1(dv) ?? string.Empty).Trim();
+                    if (string.IsNullOrWhiteSpace(formula))
+                    {
+                        continue;
+                    }
+
+                    if (LooksLikeExplicitList(formula))
+                    {
+                        continue;
+                    }
+
+                    if (!TryResolveListSource(workbook, ws, formula, out var sourceSheet, out var sourceRange, out var values))
+                    {
+                        continue;
+                    }
+
+                    var sourceKey = $"{sourceSheet}!{sourceRange}";
+                    if (!bySource.TryGetValue(sourceKey, out var book))
+                    {
+                        book = new MutableReferenceBook
+                        {
+                            SourceFormula = formula,
+                            SourceSheet = sourceSheet,
+                            SourceRange = sourceRange,
+                            Title = sourceKey,
+                            Values = values,
+                        };
+                        bySource[sourceKey] = book;
+                    }
+                    else
+                    {
+                        // Prefer longer value list if multiple validations point to the same source.
+                        if (values.Count > book.Values.Count)
+                        {
+                            book.Values = values;
+                        }
+                    }
+
+                    foreach (var r in dv.Ranges)
+                    {
+                        book.AppliedTo.Add($"{ws.Name}!{r.RangeAddress}");
+                    }
+                }
+            }
+
+            return bySource.Values
+                .Select(b => new ReferenceBook
+                {
+                    Id = Hashing.Sha256Hex($"{b.SourceSheet}!{b.SourceRange}"),
+                    Title = b.Title,
+                    SourceFormula = b.SourceFormula,
+                    SourceSheet = b.SourceSheet,
+                    SourceRange = b.SourceRange,
+                    AppliedTo = b.AppliedTo
+                        .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
+                        .ToArray(),
+                    Values = b.Values
+                })
+                .OrderBy(b => b.Title, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch (Exception ex)
+        {
+            throw new FormParseException("Failed to read reference books (data validation lists) from Excel file.", ex);
+        }
+    }
+
+    private static bool LooksLikeExplicitList(string formula)
+    {
+        var f = formula.Trim();
+        if (f.StartsWith("=", StringComparison.Ordinal))
+        {
+            f = f[1..].Trim();
+        }
+
+        // Explicit list is usually quoted or comma-separated constants, not a sheet/range reference.
+        // We only want lists that point to a value interval.
+        return f.Contains(',', StringComparison.Ordinal) && !f.Contains('!', StringComparison.Ordinal);
+    }
+
+    private static string? GetValidationFormula1(IXLDataValidation dv)
+    {
+        // ClosedXML doesn't expose formula properties on IXLDataValidation in all versions.
+        // Use reflection on the concrete type.
+        var t = dv.GetType();
+
+        // Seen in various ClosedXML builds:
+        // - Formula1
+        // - DataValidationForumla1 (misspelled)
+        // - DataValidationFormula1
+        var prop =
+            t.GetProperty("Formula1", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? t.GetProperty("DataValidationForumla1", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            ?? t.GetProperty("DataValidationFormula1", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+
+        var value = prop?.GetValue(dv);
+        if (value is null)
+        {
+            // In ClosedXML 0.105, list validations often store the list source in Value/MinValue
+            // and don't populate Formula1 at all.
+            value =
+                t.GetProperty("Value", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(dv)
+                ?? t.GetProperty("MinValue", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(dv)
+                ?? t.GetProperty("MaxValue", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)?.GetValue(dv);
+
+            if (value is null)
+            {
+                return null;
+            }
+        }
+
+        if (value is string s)
+        {
+            return s;
+        }
+
+        return value.ToString();
+    }
+
+    private static bool TryResolveListSource(
+        XLWorkbook workbook,
+        IXLWorksheet currentSheet,
+        string formula,
+        out string sourceSheet,
+        out string sourceRange,
+        out IReadOnlyList<string> values)
+    {
+        sourceSheet = string.Empty;
+        sourceRange = string.Empty;
+        values = Array.Empty<string>();
+
+        var f = formula.Trim();
+        if (f.StartsWith("=", StringComparison.Ordinal))
+        {
+            f = f[1..].Trim();
+        }
+
+        // Typical formats:
+        //  - Sheet1!$A$1:$A$10
+        //  - 'Sheet 1'!$A$1:$A$10
+        //  - $A$1:$A$10 (same sheet)
+        IXLWorksheet sourceWs;
+        string rangeRef;
+
+        if (TryParseSheetRange(f, out var sheetName, out rangeRef))
+        {
+            var ws = workbook.Worksheets
+                .FirstOrDefault(w => string.Equals(w.Name, sheetName, StringComparison.OrdinalIgnoreCase));
+            if (ws is null)
+            {
+                return false;
+            }
+
+            sourceWs = ws;
+            sourceSheet = ws.Name ?? sheetName;
+        }
+        else
+        {
+            // If there is no explicit sheet, assume the current one.
+            sourceWs = currentSheet;
+            sourceSheet = currentSheet.Name ?? string.Empty;
+            rangeRef = f;
+        }
+
+        try
+        {
+            var range = sourceWs.Range(rangeRef);
+            sourceRange = range.RangeAddress.ToString() ?? rangeRef;
+            values = ExtractRangeValues(range);
+            return values.Count > 0;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryParseSheetRange(string f, out string sheetName, out string rangeRef)
+    {
+        sheetName = string.Empty;
+        rangeRef = string.Empty;
+
+        var bang = f.IndexOf('!');
+        if (bang <= 0 || bang >= f.Length - 1)
+        {
+            return false;
+        }
+
+        sheetName = f[..bang].Trim();
+        rangeRef = f[(bang + 1)..].Trim();
+
+        if (sheetName.Length >= 2 && sheetName.StartsWith("'", StringComparison.Ordinal) && sheetName.EndsWith("'", StringComparison.Ordinal))
+        {
+            sheetName = sheetName[1..^1].Replace("''", "'");
+        }
+
+        return !string.IsNullOrWhiteSpace(sheetName) && !string.IsNullOrWhiteSpace(rangeRef);
+    }
+
+    private static IReadOnlyList<string> ExtractRangeValues(IXLRange range)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        var list = new List<string>();
+
+        foreach (var cell in range.Cells()
+            .OrderBy(c => c.Address.RowNumber)
+            .ThenBy(c => c.Address.ColumnNumber))
+        {
+            if (cell.IsEmpty(XLCellsUsedOptions.Contents))
+            {
+                continue;
+            }
+
+            var raw = cell.GetFormattedString()?.Trim();
+            if (string.IsNullOrWhiteSpace(raw))
+            {
+                continue;
+            }
+
+            if (seen.Add(raw))
+            {
+                list.Add(raw);
+            }
+        }
+
+        return list;
+    }
+
     private static string NormalizeFormNumber(string raw)
     {
         var trimmed = raw.Trim();
@@ -263,6 +509,23 @@ public sealed class ExcelFormParser
     }
 
     private sealed record HeaderParseResult(IReadOnlyList<HeaderNode> Nodes, int LastHeaderRow, int LastHeaderCol);
+    private static void EnsureNoMergedCellsInBottomHeaderRow(IXLRangeAddress[] merged, int bottomHeaderRow, int lastHeaderCol)
+    {
+        // We only support templates where each column has a clearly named header cell.
+        // Therefore the bottom header row must not contain any merged cells.
+        var offender = merged.FirstOrDefault(a =>
+            a.FirstAddress.RowNumber <= bottomHeaderRow
+            && a.LastAddress.RowNumber >= bottomHeaderRow
+            && a.FirstAddress.ColumnNumber <= lastHeaderCol
+            && a.LastAddress.ColumnNumber >= 1);
+
+        if (offender is not null)
+        {
+            throw new FormParseException(
+                $"Bottom header row (row {bottomHeaderRow}) contains a merged range (r{offender.FirstAddress.RowNumber}-{offender.LastAddress.RowNumber}, c{offender.FirstAddress.ColumnNumber}-{offender.LastAddress.ColumnNumber}). "
+                + "Unmerge the bottom header row so each column has a unique header cell.");
+        }
+    }
 
     private static HeaderParseResult ParseHeader(IXLWorksheet ws, int headerRowStart, int usedLastRow, int usedLastCol)
     {
@@ -287,7 +550,7 @@ public sealed class ExcelFormParser
         var maxProbeRow = Math.Min(usedLastRow, headerRowStart + 50);
         var probeStartRow = Math.Max(headerRowStart, lastMergedBottom == 0 ? headerRowStart : lastMergedBottom);
 
-    FormParseException? lastError = null;
+        FormParseException? lastError = null;
 
         for (var lastHeaderRow = probeStartRow; lastHeaderRow <= maxProbeRow; lastHeaderRow++)
         {
@@ -300,6 +563,8 @@ public sealed class ExcelFormParser
             var regions = new List<HeaderRegion>();
             try
             {
+                EnsureNoMergedCellsInBottomHeaderRow(merged, lastHeaderRow, lastHeaderCol);
+
                 for (var r = headerRowStart; r <= lastHeaderRow; r++)
                 {
                     for (var c = 1; c <= lastHeaderCol; c++)
@@ -623,5 +888,15 @@ public sealed class ExcelFormParser
                     .ToArray()
             };
         }
+    }
+
+    private sealed class MutableReferenceBook
+    {
+        public string Title { get; set; } = string.Empty;
+        public string SourceFormula { get; set; } = string.Empty;
+        public string SourceSheet { get; set; } = string.Empty;
+        public string SourceRange { get; set; } = string.Empty;
+        public HashSet<string> AppliedTo { get; } = new(StringComparer.OrdinalIgnoreCase);
+        public IReadOnlyList<string> Values { get; set; } = Array.Empty<string>();
     }
 }

@@ -38,6 +38,52 @@ else
         The form will appear in the list only after you click <strong>Save types</strong>.
     </div>
 
+    @if (Model.PendingReferenceBooks.Count > 0)
+    {
+        <div class="alert alert-secondary">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <strong>Reference books</strong>
+                    <span class="text-muted">(found: @Model.PendingReferenceBooks.Count)</span>
+                </div>
+                <a class="btn btn-outline-secondary btn-sm" href="/Directories">Open list</a>
+            </div>
+            <div class="small text-muted mt-1">
+                Reference books are extracted from Excel Data Validation (List) pointing to a range.
+            </div>
+        </div>
+
+        <div class="table-responsive mb-3">
+            <table class="table table-sm table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th>Reference book</th>
+                        <th class="text-end" style="width: 120px;">Values</th>
+                        <th>Source</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var b in Model.PendingReferenceBooks)
+                {
+                    var source = !string.IsNullOrWhiteSpace(b.SourceSheet) && !string.IsNullOrWhiteSpace(b.SourceRange)
+                        ? $"{b.SourceSheet}!{b.SourceRange}"
+                        : b.SourceFormula;
+                    <tr>
+                        <td>
+                            <a asp-page="/Directories/PendingDetails"
+                               asp-route-formNumber="@Model.FormNumber"
+                               asp-route-pendingId="@Model.PendingId"
+                               asp-route-id="@b.Id">@b.Title</a>
+                        </td>
+                        <td class="text-end">@b.Values.Count</td>
+                        <td class="text-muted small">@source</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
     <form method="post" asp-page-handler="SaveTypes">
         <input type="hidden" name="formNumber" value="@Model.FormNumber" />
         <input type="hidden" name="pendingId" value="@Model.PendingId" />

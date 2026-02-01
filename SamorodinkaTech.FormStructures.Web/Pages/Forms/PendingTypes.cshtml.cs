@@ -22,6 +22,8 @@ public class PendingTypesModel : PageModel
 
     public FormStorage.PendingUpload? PendingUpload { get; private set; }
 
+    public IReadOnlyList<ReferenceBook> PendingReferenceBooks { get; private set; } = Array.Empty<ReferenceBook>();
+
     [BindProperty]
     public List<ColumnTypeEditRow> TypeEdits { get; set; } = new();
 
@@ -40,6 +42,8 @@ public class PendingTypesModel : PageModel
         {
             return NotFound();
         }
+
+        PendingReferenceBooks = _storage.TryLoadPendingReferenceBooks(FormNumber, PendingId);
 
         IntendedVersion = PendingUpload.Meta.IntendedVersion;
 
@@ -66,6 +70,8 @@ public class PendingTypesModel : PageModel
         {
             return NotFound();
         }
+
+        PendingReferenceBooks = _storage.TryLoadPendingReferenceBooks(FormNumber, PendingId);
 
         IntendedVersion = PendingUpload.Meta.IntendedVersion;
 

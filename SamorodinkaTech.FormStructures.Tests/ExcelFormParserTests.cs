@@ -238,10 +238,17 @@ public class ExcelFormParserTests
             ws.Cell(1, 1).Value = "TEST-001";
             ws.Cell(2, 1).Value = "Title";
 
-            // Single-row header (row 3) where a leaf spans multiple columns.
+            // Two-row header where the bottom row has no merged cells,
+            // but a leaf header exists above and spans multiple columns.
             ws.Cell(3, 1).Value = "A";
             ws.Range(3, 1, 3, 2).Merge();
             ws.Cell(3, 3).Value = "B";
+
+            // Make row 4 part of the used range, but keep it effectively empty.
+            // This ensures the parser probes a 2-row header and the merged cell is NOT in the bottom row.
+            ws.Cell(4, 1).Value = " ";
+            ws.Cell(4, 2).Value = " ";
+            ws.Cell(4, 3).Value = " ";
         });
 
         var ex = Assert.Throws<FormParseException>(() => parser.ParseLayout(stream, sourceFileName: "leaf-span.xlsx"));

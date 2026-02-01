@@ -1,0 +1,77 @@
+@page
+@model SamorodinkaTech.FormStructures.Web.Pages.Directories.IndexModel
+@{
+    ViewData["Title"] = "Reference books";
+}
+
+<h1>Reference books</h1>
+
+@if (Model.Items.Count == 0)
+{
+    <div class="alert alert-secondary">No reference books found. They are extracted automatically when uploading an Excel template with Data Validation (List) pointing to a range.</div>
+}
+else
+{
+    <table class="table table-sm table-striped align-middle">
+        <thead>
+            <tr>
+                <th>Form</th>
+                <th>Version</th>
+                <th>Reference book</th>
+                <th class="text-end">Values</th>
+            </tr>
+        </thead>
+        <tbody>
+        @foreach (var it in Model.Items)
+        {
+            <tr>
+                <td>
+                    <a href="/forms/@Uri.EscapeDataString(it.FormNumber)">@it.FormTitle</a>
+                    <div class="text-muted small">#@it.FormNumber</div>
+                </td>
+                <td>
+                    v@it.Version
+                    @if (!string.IsNullOrWhiteSpace(it.PendingId))
+                    {
+                        <span class="badge text-bg-warning ms-1">pending</span>
+                        @if (it.PreviousVersion is int prev && prev > 0)
+                        {
+                            <div class="small">
+                                <a href="/forms/@Uri.EscapeDataString(it.FormNumber)/pending/@Uri.EscapeDataString(it.PendingId!)?mapFrom=@prev">open</a>
+                            </div>
+                        }
+                        else
+                        {
+                            <div class="small">
+                                <a href="/forms/@Uri.EscapeDataString(it.FormNumber)/pending/@Uri.EscapeDataString(it.PendingId!)/types">open</a>
+                            </div>
+                        }
+                    }
+                </td>
+                <td>
+                    @if (string.IsNullOrWhiteSpace(it.PendingId))
+                    {
+                        <a asp-page="/Directories/Details"
+                           asp-route-formNumber="@it.FormNumber"
+                           asp-route-version="@it.Version"
+                           asp-route-id="@it.ReferenceBookId">
+                            @it.ReferenceBookTitle
+                        </a>
+                    }
+                    else
+                    {
+                        <a asp-page="/Directories/PendingDetails"
+                           asp-route-formNumber="@it.FormNumber"
+                           asp-route-pendingId="@it.PendingId"
+                           asp-route-id="@it.ReferenceBookId">
+                            @it.ReferenceBookTitle
+                        </a>
+                    }
+                    <div class="text-muted small">@it.Source</div>
+                </td>
+                <td class="text-end">@it.ValueCount</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}

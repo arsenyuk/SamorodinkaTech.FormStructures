@@ -1,0 +1,57 @@
+@page "/Directories/PendingDetails/{formNumber}/{pendingId}/{id}"
+@model SamorodinkaTech.FormStructures.Web.Pages.Directories.PendingDetailsModel
+@{
+    ViewData["Title"] = "Reference book (pending)";
+}
+
+@if (Model.Book is null)
+{
+    <div class="alert alert-danger">Reference book not found (pending).</div>
+    <a class="btn btn-secondary" asp-page="/Directories/Index">Back</a>
+}
+else
+{
+    <div class="d-flex justify-content-between align-items-start gap-3">
+        <div>
+            <h1 class="mb-1">@Model.Book.Title</h1>
+            <div class="text-muted">Form: <a href="/forms/@Uri.EscapeDataString(Model.FormNumber)">@Model.FormNumber</a> · pending <code>@Model.PendingId</code></div>
+            <div class="text-muted">Source: @Model.Book.SourceFormula</div>
+        </div>
+        <div class="d-flex gap-2">
+            @if (Model.PreviousVersion > 0)
+            {
+                <a class="btn btn-outline-secondary" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/pending/@Uri.EscapeDataString(Model.PendingId)?mapFrom=@Model.PreviousVersion">Open pending</a>
+            }
+            else
+            {
+                <a class="btn btn-outline-secondary" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/pending/@Uri.EscapeDataString(Model.PendingId)/types">Open pending</a>
+            }
+            <a class="btn btn-secondary" asp-page="/Directories/Index">Back</a>
+        </div>
+    </div>
+
+    <hr />
+
+    <div class="mb-2">
+        <span class="badge text-bg-warning">pending</span>
+        <span class="badge text-bg-primary ms-1">@Model.Book.Values.Count values</span>
+    </div>
+
+    <table class="table table-sm table-striped">
+        <thead>
+            <tr>
+                <th style="width: 80px;">#</th>
+                <th>Value</th>
+            </tr>
+        </thead>
+        <tbody>
+        @for (var i = 0; i < Model.Book.Values.Count; i++)
+        {
+            <tr>
+                <td>@(i + 1)</td>
+                <td>@Model.Book.Values[i]</td>
+            </tr>
+        }
+        </tbody>
+    </table>
+}

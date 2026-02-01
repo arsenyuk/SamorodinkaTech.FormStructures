@@ -9,11 +9,13 @@ public sealed class FormStorage
     private static readonly ConcurrentDictionary<string, object> FormLocks = new(StringComparer.OrdinalIgnoreCase);
 
     private readonly string _root;
+    private readonly ExcelFormParser _parser;
     private readonly ILogger<FormStorage> _logger;
 
-    public FormStorage(IOptions<StorageOptions> options, IWebHostEnvironment env, ILogger<FormStorage> logger)
+    public FormStorage(IOptions<StorageOptions> options, IWebHostEnvironment env, ExcelFormParser parser, ILogger<FormStorage> logger)
     {
         _logger = logger;
+        _parser = parser;
         var storageRoot = options.Value.StorageRoot;
         _root = Path.GetFullPath(Path.Combine(env.ContentRootPath, storageRoot));
     }
@@ -165,6 +167,34 @@ public sealed class FormStorage
         {
             _logger.LogWarning(ex, "Failed to read structure.json for {FormNumber} v{Version}", formNumber, version);
             return null;
+        }
+    }
+
+    public IReadOnlyList<ReferenceBook> TryLoadReferenceBooks(string formNumber, int version)
+    {
+        EnsureInitialized();
+
+        if (string.IsNullOrWhiteSpace(formNumber) || version <= 0)
+        {
+            return Array.Empty<ReferenceBook>();
+        }
+
+        var path = Path.Combine(GetVersionDir(formNumber, version), "reference-books.json");
+        if (!File.Exists(path))
+        {
+            return Array.Empty<ReferenceBook>();
+        }
+
+        try
+        {
+            var json = File.ReadAllText(path);
+            return System.Text.Json.JsonSerializer.Deserialize<ReferenceBook[]>(json, JsonUtil.StableOptions)
+                   ?? Array.Empty<ReferenceBook>();
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to read reference-books.json for {FormNumber} v{Version}", formNumber, version);
+            return Array.Empty<ReferenceBook>();
         }
     }
 
@@ -326,6 +356,11 @@ public sealed class FormStorage
             var structureJson = JsonUtil.ToStableJson(stored);
             File.WriteAllText(Path.Combine(versionDir, "structure.json"), structureJson);
 
+            // Extract and persist reference books (data validation lists) from the template.
+            ms.Position = 0;
+            var books = parser.ExtractReferenceBooks(ms);
+            SaveReferenceBooksInternal(formKey, newVersion, books);
+
             _logger.LogInformation("Stored {FormNumber} v{Version} at {Dir}", formKey, newVersion, versionDir);
 
             return new SaveResult(
@@ -380,6 +415,103 @@ public sealed class FormStorage
         {
             _logger.LogWarning(ex, "Failed to read pending upload for {FormNumber} ({PendingId})", formNumber, pendingId);
             return null;
+        }
+    }
+
+    public IReadOnlyList<PendingMeta> ListPending(string formNumber)
+    {
+        EnsureInitialized();
+
+        if (string.IsNullOrWhiteSpace(formNumber))
+        {
+            return Array.Empty<PendingMeta>();
+        }
+
+        var pendingRoot = GetPendingRootDir(formNumber);
+        if (!Directory.Exists(pendingRoot))
+        {
+            return Array.Empty<PendingMeta>();
+        }
+
+        var list = new List<PendingMeta>();
+
+        foreach (var dir in Directory.EnumerateDirectories(pendingRoot))
+        {
+            try
+            {
+                var metaPath = Path.Combine(dir, "meta.json");
+                if (!File.Exists(metaPath))
+                {
+                    continue;
+                }
+
+                var metaJson = File.ReadAllText(metaPath);
+                var meta = System.Text.Json.JsonSerializer.Deserialize<PendingMeta>(metaJson, JsonUtil.StableOptions);
+                if (meta is null)
+                {
+                    continue;
+                }
+
+                list.Add(meta);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to read pending meta in {Dir}", dir);
+            }
+        }
+
+        return list
+            .OrderByDescending(x => x.CreatedAtUtc)
+            .ToArray();
+    }
+
+    public IReadOnlyList<ReferenceBook> TryLoadPendingReferenceBooks(string formNumber, string pendingId)
+    {
+        EnsureInitialized();
+
+        if (string.IsNullOrWhiteSpace(formNumber) || string.IsNullOrWhiteSpace(pendingId))
+        {
+            return Array.Empty<ReferenceBook>();
+        }
+
+        var dir = GetPendingDir(formNumber, pendingId);
+        var jsonPath = Path.Combine(dir, "reference-books.json");
+
+        if (File.Exists(jsonPath))
+        {
+            try
+            {
+                var json = File.ReadAllText(jsonPath);
+                return System.Text.Json.JsonSerializer.Deserialize<ReferenceBook[]>(json, JsonUtil.StableOptions)
+                       ?? Array.Empty<ReferenceBook>();
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to read pending reference-books.json for {FormNumber} ({PendingId})", formNumber, pendingId);
+                return Array.Empty<ReferenceBook>();
+            }
+        }
+
+        var originalPath = Path.Combine(dir, "original.xlsx");
+        if (!File.Exists(originalPath))
+        {
+            return Array.Empty<ReferenceBook>();
+        }
+
+        try
+        {
+            using var fs = File.OpenRead(originalPath);
+            var books = _parser.ExtractReferenceBooks(fs);
+
+            // Best-effort cache for faster pending UI.
+            TryWriteReferenceBooksJson(jsonPath, books);
+
+            return books;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to extract pending reference books for {FormNumber} ({PendingId})", formNumber, pendingId);
+            return Array.Empty<ReferenceBook>();
         }
     }
 
@@ -438,6 +570,13 @@ public sealed class FormStorage
             var structureJson = JsonUtil.ToStableJson(stored);
             File.WriteAllText(Path.Combine(versionDir, "structure.json"), structureJson);
 
+            // Extract and persist reference books (data validation lists) from the committed template.
+            using (var fs = File.OpenRead(Path.Combine(versionDir, "original.xlsx")))
+            {
+                var books = _parser.ExtractReferenceBooks(fs);
+                SaveReferenceBooksInternal(formNumber, stored.Version, books);
+            }
+
             // Remove pending after successful commit.
             DeletePending(formNumber, pendingId);
 
@@ -445,6 +584,36 @@ public sealed class FormStorage
         }
 
         return Task.CompletedTask;
+    }
+
+    private void SaveReferenceBooksInternal(string formNumber, int version, IReadOnlyList<ReferenceBook> books)
+    {
+        var path = Path.Combine(GetVersionDir(formNumber, version), "reference-books.json");
+
+        TryWriteReferenceBooksJson(path, books);
+    }
+
+    private void TryWriteReferenceBooksJson(string path, IReadOnlyList<ReferenceBook> books)
+    {
+        try
+        {
+            if (books.Count == 0)
+            {
+                if (File.Exists(path))
+                {
+                    File.Delete(path);
+                }
+
+                return;
+            }
+
+            var json = JsonUtil.ToStableJson(books);
+            File.WriteAllText(path, json);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to store reference books at {Path}", path);
+        }
     }
 
     public bool DeletePending(string formNumber, string pendingId)
@@ -751,6 +920,18 @@ public sealed class FormStorage
 
         var structureJson = JsonUtil.ToStableJson(structure);
         File.WriteAllText(Path.Combine(pendingDir, "structure.json"), structureJson);
+
+        // Extract and cache reference books for pending UI.
+        try
+        {
+            originalXlsx.Position = 0;
+            var books = _parser.ExtractReferenceBooks(originalXlsx);
+            TryWriteReferenceBooksJson(Path.Combine(pendingDir, "reference-books.json"), books);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to extract reference books for pending upload {FormNumber} ({PendingId})", structure.FormNumber, pendingId);
+        }
 
         return pendingId;
     }

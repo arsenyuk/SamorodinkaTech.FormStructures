@@ -24,6 +24,8 @@ public class PendingModel : PageModel
     public FormStorage.PendingUpload? PendingUpload { get; private set; }
     public FormStructure? PreviousStructure { get; private set; }
 
+    public IReadOnlyList<ReferenceBook> PendingReferenceBooks { get; private set; } = Array.Empty<ReferenceBook>();
+
     public string? MappingWarning { get; private set; }
 
     [BindProperty]
@@ -45,6 +47,8 @@ public class PendingModel : PageModel
         {
             return NotFound();
         }
+
+        PendingReferenceBooks = _storage.TryLoadPendingReferenceBooks(FormNumber, PendingId);
 
         IntendedVersion = PendingUpload.Meta.IntendedVersion;
 
@@ -88,6 +92,8 @@ public class PendingModel : PageModel
         {
             return NotFound();
         }
+
+        PendingReferenceBooks = _storage.TryLoadPendingReferenceBooks(FormNumber, PendingId);
 
         IntendedVersion = PendingUpload.Meta.IntendedVersion;
 
