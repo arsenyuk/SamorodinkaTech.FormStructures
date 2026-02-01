@@ -280,6 +280,51 @@ public sealed class FormDataStorage
             .ToArray();
     }
 
+    public IReadOnlyList<FormDataUpload> ListAllUploads()
+    {
+        EnsureInitialized();
+
+        if (!Directory.Exists(RootPath))
+        {
+            return Array.Empty<FormDataUpload>();
+        }
+
+        var result = new List<FormDataUpload>();
+
+        foreach (var formDir in Directory.EnumerateDirectories(RootPath))
+        {
+            foreach (var versionDir in Directory.EnumerateDirectories(formDir, "v*"))
+            {
+                foreach (var uploadDir in Directory.EnumerateDirectories(versionDir))
+                {
+                    var metaPath = Path.Combine(uploadDir, "meta.json");
+                    if (!File.Exists(metaPath))
+                    {
+                        continue;
+                    }
+
+                    try
+                    {
+                        var json = File.ReadAllText(metaPath);
+                        var meta = System.Text.Json.JsonSerializer.Deserialize<FormDataUpload>(json, JsonUtil.StableOptions);
+                        if (meta is not null)
+                        {
+                            result.Add(meta);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Failed to read meta.json in {Dir}", uploadDir);
+                    }
+                }
+            }
+        }
+
+        return result
+            .OrderByDescending(x => x.UploadedAtUtc)
+            .ToArray();
+    }
+
     public FormDataFile? TryLoadData(string formNumber, int version, string uploadId)
     {
         EnsureInitialized();

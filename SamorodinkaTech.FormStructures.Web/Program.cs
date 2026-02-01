@@ -1,5 +1,7 @@
 using SamorodinkaTech.FormStructures.Web.Services;
+using SamorodinkaTech.FormStructures.Web.OData;
 using Serilog;
+using Microsoft.AspNetCore.OData;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -23,6 +25,16 @@ builder.Host.UseSerilog((context, services, loggerConfiguration) =>
 
 // Add services to the container.
 builder.Services.AddRazorPages();
+
+builder.Services
+    .AddControllers()
+    .AddOData(opt =>
+    {
+        opt.AddRouteComponents("odata", ODataModelBuilder.BuildEdmModel());
+
+        opt.Select().Filter().OrderBy().Count();
+        opt.SetMaxTop(2000);
+    });
 
 builder.Services.AddOptions<StorageOptions>()
     .Bind(builder.Configuration.GetSection("Storage"));
@@ -74,6 +86,8 @@ app.UseRouting();
 app.UseAuthorization();
 
 app.MapStaticAssets();
+
+app.MapControllers();
 app.MapRazorPages()
    .WithStaticAssets();
 
