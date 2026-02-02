@@ -14,17 +14,24 @@ else
     <div class="d-flex justify-content-between align-items-start gap-3">
         <div>
             <h1 class="mb-1">@Model.Book.Title</h1>
-            <div class="text-muted">Form: <a href="/forms/@Uri.EscapeDataString(Model.FormNumber)">@Model.FormNumber</a> · pending <code>@Model.PendingId</code></div>
+            <div class="text-muted">Form: <a asp-page="/Forms/Details" asp-route-formNumber="@Model.FormNumber">@Model.FormNumber</a> · pending <code>@Model.PendingId</code></div>
             <div class="text-muted">Source: @Model.Book.SourceFormula</div>
         </div>
         <div class="d-flex gap-2">
             @if (Model.PreviousVersion > 0)
             {
-                <a class="btn btn-outline-secondary" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/pending/@Uri.EscapeDataString(Model.PendingId)?mapFrom=@Model.PreviousVersion">Open pending</a>
+                <a class="btn btn-outline-secondary"
+                   asp-page="/Forms/Pending"
+                   asp-route-formNumber="@Model.FormNumber"
+                   asp-route-pendingId="@Model.PendingId"
+                   asp-route-mapFrom="@Model.PreviousVersion">Open pending</a>
             }
             else
             {
-                <a class="btn btn-outline-secondary" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/pending/@Uri.EscapeDataString(Model.PendingId)/types">Open pending</a>
+                <a class="btn btn-outline-secondary"
+                   asp-page="/Forms/PendingTypes"
+                   asp-route-formNumber="@Model.FormNumber"
+                   asp-route-pendingId="@Model.PendingId">Open pending</a>
             }
             <a class="btn btn-secondary" asp-page="/Directories/Index">Back</a>
         </div>

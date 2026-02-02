@@ -29,6 +29,12 @@ ASP.NET Core Razor Pages app for:
 - `GET /forms/{formNumber}/data/aggregated` — aggregated data view across uploads (for latest schema version by default)
 - `GET /forms/{formNumber}/data/v{version:int}/{uploadId}` — extracted data rows for one upload
 - `GET /forms/{formNumber}/data/v{version:int}/{uploadId}/file` — upload file page (metadata + download file/JSON)
+- `GET /Directories` — reference books extracted from Excel data validation lists
+
+## OData routes
+- `GET /odata/Data` — list of uploads
+- `GET /odata/Data('{uploadKey}')/Columns` — columns for one upload
+- `GET /odata/Data('{uploadKey}')/Rows` — row content as an open type (`c{Index}` dynamic properties)
 
 ## Form index vs form number
 The app uses two identifiers:
@@ -54,10 +60,12 @@ If the schema hash did not change, a new version is not created.
 ## Storage
 By default, files are stored under `SamorodinkaTech.FormStructures.Web/storage/`.
 
-- Schemas: `SamorodinkaTech.FormStructures.Web/storage/forms/{formNumber}/v{n}/`
+- Schemas: `SamorodinkaTech.FormStructures.Web/storage/forms/{index}/v{n}/`
   - `original.xlsx`
   - `structure.json`
-- Data uploads: `SamorodinkaTech.FormStructures.Web/storage/data/{formNumber}/v{n}/{uploadId}/`
+-  (optional) `reference-books.json` — extracted reference books for that schema version
+
+- Data uploads: `SamorodinkaTech.FormStructures.Web/storage/data/{index}/v{n}/{uploadId}/`
   - `original.xlsx`
   - `data.json`
   - `meta.json`

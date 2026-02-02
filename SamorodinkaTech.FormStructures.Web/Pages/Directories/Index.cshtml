@@ -26,7 +26,7 @@ else
         {
             <tr>
                 <td>
-                    <a href="/forms/@Uri.EscapeDataString(it.FormNumber)">@it.FormTitle</a>
+                    <a asp-page="/Forms/Details" asp-route-formNumber="@it.FormNumber">@it.FormTitle</a>
                     <div class="text-muted small">#@it.FormNumber</div>
                 </td>
                 <td>
@@ -37,13 +37,18 @@ else
                         @if (it.PreviousVersion is int prev && prev > 0)
                         {
                             <div class="small">
-                                <a href="/forms/@Uri.EscapeDataString(it.FormNumber)/pending/@Uri.EscapeDataString(it.PendingId!)?mapFrom=@prev">open</a>
+                                <a asp-page="/Forms/Pending"
+                                   asp-route-formNumber="@it.FormNumber"
+                                   asp-route-pendingId="@it.PendingId"
+                                   asp-route-mapFrom="@prev">open</a>
                             </div>
                         }
                         else
                         {
                             <div class="small">
-                                <a href="/forms/@Uri.EscapeDataString(it.FormNumber)/pending/@Uri.EscapeDataString(it.PendingId!)/types">open</a>
+                                <a asp-page="/Forms/PendingTypes"
+                                   asp-route-formNumber="@it.FormNumber"
+                                   asp-route-pendingId="@it.PendingId">open</a>
                             </div>
                         }
                     }
