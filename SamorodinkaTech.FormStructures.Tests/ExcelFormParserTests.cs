@@ -209,6 +209,17 @@ public class ExcelFormParserTests
     }
 
     [Fact]
+    public void ParseLayout_Throws_WhenBottomHeaderRowContainsMergedCells()
+    {
+        var parser = new ExcelFormParser();
+        using var stream = LoadXlsxFromBase64Fixture("BOTTOM-MERGED-001.xlsx");
+
+        var ex = Assert.Throws<FormParseException>(() => parser.ParseLayout(stream, sourceFileName: "bottom-merged.xlsx"));
+        Assert.Contains("Bottom header row", ex.Message, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("merged", ex.Message, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void ParseLayout_Throws_WhenMergedHeaderTopLeftIsEmpty()
     {
         var parser = new ExcelFormParser();
