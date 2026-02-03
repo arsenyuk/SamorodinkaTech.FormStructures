@@ -5,6 +5,17 @@
 @{
     var formTitle = Model.Structure?.FormTitle;
     var visiblePaths = Model.VisibleColumns.Select(c => c.Path).ToHashSet(StringComparer.Ordinal);
+    var rbHasFilter = Model.AppliedReferenceBookFilters.Count > 0;
+    var tableColCount =
+        (Model.ShowUploadedColumn ? 1 : 0)
+        + (Model.ShowFileColumn ? 1 : 0)
+        + (Model.ShowUploadIdColumn ? 1 : 0)
+        + Model.VisibleColumns.Count
+        + 1; // actions
+    var rbQueryForLinks = rbHasFilter
+        ? $"?{Model.ReferenceBookQuery.TrimStart('&')}"
+        : string.Empty;
+
     ViewData["Title"] = string.IsNullOrWhiteSpace(formTitle)
         ? "Aggregated data"
     : $"{formTitle} · Aggregated data";
@@ -25,7 +36,7 @@
         }
     </div>
     <div class="d-flex gap-2">
-        <a class="btn btn-outline-primary btn-sm" href="?handler=Xlsx&version=@Model.Version&sort=@Uri.EscapeDataString(Model.SortKey)&dir=@Uri.EscapeDataString(Model.SortDir)@Model.SelectedColsQuery">Download .xlsx</a>
+        <a class="btn btn-outline-primary btn-sm" href="?handler=Xlsx&version=@Model.Version&sort=@Uri.EscapeDataString(Model.SortKey)&dir=@Uri.EscapeDataString(Model.SortDir)@Model.SelectedColsQuery@Model.ReferenceBookQuery">Download .xlsx</a>
         <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">Uploads</a>
         <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Schema</a>
     </div>
@@ -56,6 +67,12 @@ else
                 {
                     <input type="hidden" name="cols" value="@c" />
                 }
+                @foreach (var f in Model.AppliedReferenceBookFilters)
+                {
+                    <input type="hidden" name="rbCol" value="@f.Column" />
+                    <input type="hidden" name="rbValue" value="@f.Value" />
+                    <input type="hidden" name="rbMatch" value="@(f.Match == AggregatedModel.ReferenceBookMatch.Contains ? "contains" : "eq")" />
+                }
 
                 <div class="mb-3">
                     <label class="form-label" for="DataUpload">Filled Excel file (.xlsx)</label>
@@ -71,7 +88,7 @@ else
         </div>
     </div>
 
-    if (Model.Rows.Count == 0)
+    if (Model.TotalRowCount == 0)
     {
         <div class="alert alert-warning">No data uploaded for this schema version yet.</div>
         return;
@@ -83,6 +100,12 @@ else
                 <input type="hidden" name="version" value="@Model.Version" />
                 <input type="hidden" name="sort" value="@Model.SortKey" />
                 <input type="hidden" name="dir" value="@Model.SortDir" />
+                @foreach (var f in Model.AppliedReferenceBookFilters)
+                {
+                    <input type="hidden" name="rbCol" value="@f.Column" />
+                    <input type="hidden" name="rbValue" value="@f.Value" />
+                    <input type="hidden" name="rbMatch" value="@(f.Match == AggregatedModel.ReferenceBookMatch.Contains ? "contains" : "eq")" />
+                }
 
                 <div class="mb-2"><strong>Technical</strong></div>
                 <div class="d-flex flex-wrap gap-3 mb-3">
@@ -122,6 +145,77 @@ else
             </form>
         </div>
 
+        @if (Model.FilterColumns.Count > 0)
+        {
+            <div class="collapse @(rbHasFilter ? "show" : "")" id="rbFilterPanel">
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <form method="get">
+                            <input type="hidden" name="version" value="@Model.Version" />
+                            <input type="hidden" name="sort" value="@Model.SortKey" />
+                            <input type="hidden" name="dir" value="@Model.SortDir" />
+                            @foreach (var c in Model.SelectedCols)
+                            {
+                                <input type="hidden" name="cols" value="@c" />
+                            }
+
+                            <div id="rbFilters" class="d-flex flex-column gap-2">
+                                @for (var i = 0; i < Model.ReferenceBookFilterInputs.Count; i++)
+                                {
+                                    var input = Model.ReferenceBookFilterInputs[i];
+
+                                    <div class="row g-2 align-items-end rb-filter-row" data-rb-index="@i">
+                                        <div class="col-12 col-md-4">
+                                            <label class="form-label" for="rbCol_@i">Column</label>
+                                            <select class="form-select form-select-sm" id="rbCol_@i" name="rbCol" data-rb-index="@i">
+                                                <option value="">(no filter)</option>
+                                                @foreach (var c in Model.FilterColumns)
+                                                {
+                                                    var token = $"c{c.Index}";
+                                                    <option value="@token" selected="@(string.Equals(input.Column, token, StringComparison.OrdinalIgnoreCase) ? "selected" : null)">@c.Name</option>
+                                                }
+                                            </select>
+                                        </div>
+
+                                        <div class="col-12 col-md-2">
+                                            <label class="form-label" for="rbMatch_@i">Match</label>
+                                            <select class="form-select form-select-sm" id="rbMatch_@i" name="rbMatch" data-rb-index="@i">
+                                                <option value="eq" selected="@(string.Equals(input.Match, "contains", StringComparison.OrdinalIgnoreCase) ? null : "selected")">Equals</option>
+                                                <option value="contains" selected="@(string.Equals(input.Match, "contains", StringComparison.OrdinalIgnoreCase) ? "selected" : null)">Contains</option>
+                                            </select>
+                                        </div>
+
+                                        <div class="col-12 col-md-4">
+                                            <label class="form-label" for="rbValue_@i">Value</label>
+                                            <input class="form-control form-control-sm" id="rbValue_@i" name="rbValue" value="@input.Value" placeholder="Choose or type" list="rbValues_@i" data-rb-index="@i" />
+                                            <datalist id="rbValues_@i"></datalist>
+                                        </div>
+
+                                        <div class="col-12 col-md-2 d-flex gap-2">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-rb-remove="@i">Remove</button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+
+                            <div class="mt-2 d-flex gap-2">
+                                <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="rbAddFilter">Add filter</button>
+                                <a class="btn btn-outline-secondary btn-sm" href="?version=@Model.Version&sort=@Uri.EscapeDataString(Model.SortKey)&dir=@Uri.EscapeDataString(Model.SortDir)@Model.SelectedColsQuery">Clear</a>
+                            </div>
+                        </form>
+
+                        @if (rbHasFilter)
+                        {
+                            <div class="text-muted mt-2">
+                                Showing <strong>@Model.FilteredRowCount</strong> of <strong>@Model.TotalRowCount</strong> row(s).
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
         <div class="table-responsive">
         <table class="table table-sm table-striped table-bordered align-middle">
             <thead>
@@ -131,48 +225,61 @@ else
                 Model.SortDir,
                 Model.Version,
                 Model.SelectedCols,
+                Model.ReferenceBookQuery,
+                Model.FilterColumns.Count > 0,
                 Model.ShowUploadedColumn,
                 Model.ShowFileColumn,
                 Model.ShowUploadIdColumn,
                 Model.VisibleColumns)
             </thead>
             <tbody>
-            @foreach (var r in Model.Rows)
+            @if (Model.Rows.Count == 0)
             {
-                var uploadHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{r.FormVersion}/{Uri.EscapeDataString(r.UploadId)}";
-                var fileHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{r.FormVersion}/{Uri.EscapeDataString(r.UploadId)}/file";
-
                 <tr>
-                    @if (Model.ShowUploadedColumn)
-                    {
-                        <td><code>@r.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
-                    }
-                    @if (Model.ShowFileColumn)
-                    {
-                        <td>
-                            <div><a href="@fileHref">@r.OriginalFileName</a></div>
-                            @if (!Model.ShowUploadIdColumn)
-                            {
-                                <div class="text-muted"><small><code>@r.UploadId</code></small></div>
-                            }
-                        </td>
-                    }
-                    @if (Model.ShowUploadIdColumn)
-                    {
-                        <td><code>@r.UploadId</code></td>
-                    }
-                    @foreach (var col in Model.VisibleColumns)
-                    {
-                        r.Values.TryGetValue(col.Path, out var v);
-                        <td>@v</td>
-                    }
-                    <td class="text-end">
-                        <div class="d-flex gap-2 justify-content-end">
-                            <a class="btn btn-outline-secondary btn-sm" href="@uploadHref">Data</a>
-                            <a class="btn btn-outline-secondary btn-sm" href="@fileHref">File</a>
-                        </div>
+                    <td colspan="@tableColCount">
+                        <div class="alert alert-warning mb-0">No rows match the current filters.</div>
                     </td>
                 </tr>
+            }
+            else
+            {
+                @foreach (var r in Model.Rows)
+                {
+                    var uploadHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{r.FormVersion}/{Uri.EscapeDataString(r.UploadId)}{rbQueryForLinks}";
+                    var fileHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{r.FormVersion}/{Uri.EscapeDataString(r.UploadId)}/file";
+
+                    <tr>
+                        @if (Model.ShowUploadedColumn)
+                        {
+                            <td><code>@r.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                        }
+                        @if (Model.ShowFileColumn)
+                        {
+                            <td>
+                                <div><a href="@fileHref">@r.OriginalFileName</a></div>
+                                @if (!Model.ShowUploadIdColumn)
+                                {
+                                    <div class="text-muted"><small><code>@r.UploadId</code></small></div>
+                                }
+                            </td>
+                        }
+                        @if (Model.ShowUploadIdColumn)
+                        {
+                            <td><code>@r.UploadId</code></td>
+                        }
+                        @foreach (var col in Model.VisibleColumns)
+                        {
+                            r.Values.TryGetValue(col.Path, out var v);
+                            <td>@v</td>
+                        }
+                        <td class="text-end">
+                            <div class="d-flex gap-2 justify-content-end">
+                                <a class="btn btn-outline-secondary btn-sm" href="@uploadHref">Data</a>
+                                <a class="btn btn-outline-secondary btn-sm" href="@fileHref">File</a>
+                            </div>
+                        </td>
+                    </tr>
+                }
             }
             </tbody>
         </table>
@@ -182,6 +289,120 @@ else
 
 @section Scripts {
     <partial name="_ValidationScriptsPartial" />
+    <script>
+        (() => {
+            const valuesByCol = @Html.Raw(Model.ReferenceBookValuesJson);
+
+            function fillDatalist(index) {
+                const colSelect = document.getElementById(`rbCol_${index}`);
+                const list = document.getElementById(`rbValues_${index}`);
+                if (!colSelect || !list) return;
+
+                list.innerHTML = '';
+                const token = (colSelect.value || '').trim();
+                const values = valuesByCol[token] || [];
+                for (const v of values) {
+                    const opt = document.createElement('option');
+                    opt.value = v;
+                    list.appendChild(opt);
+                }
+            }
+
+            function getNextIndex() {
+                const ids = Array.from(document.querySelectorAll('select[id^="rbCol_"]'))
+                    .map(el => el.id.substring('rbCol_'.length))
+                    .map(x => parseInt(x, 10))
+                    .filter(x => !Number.isNaN(x));
+                if (ids.length === 0) return 0;
+                return Math.max(...ids) + 1;
+            }
+
+            function wireRow(index) {
+                const colSelect = document.getElementById(`rbCol_${index}`);
+                if (colSelect) {
+                    colSelect.addEventListener('change', () => fillDatalist(index));
+                }
+
+                const removeBtn = document.querySelector(`[data-rb-remove="${index}"]`);
+                if (removeBtn) {
+                    removeBtn.addEventListener('click', () => {
+                        const container = document.getElementById('rbFilters');
+                        const row = document.querySelector(`.rb-filter-row[data-rb-index="${index}"]`);
+                        if (!container || !row) return;
+
+                        const rowCount = container.querySelectorAll('.rb-filter-row').length;
+                        if (rowCount <= 1) {
+                            const val = document.getElementById(`rbValue_${index}`);
+                            const match = document.getElementById(`rbMatch_${index}`);
+                            if (colSelect) colSelect.value = '';
+                            if (match) match.value = 'eq';
+                            if (val) val.value = '';
+                            fillDatalist(index);
+                            return;
+                        }
+
+                        row.remove();
+                    });
+                }
+            }
+
+            function addRow() {
+                const container = document.getElementById('rbFilters');
+                if (!container) return;
+
+                const index = getNextIndex();
+
+                const firstSelect = document.querySelector('select[id^="rbCol_"]');
+                const optionsHtml = firstSelect ? firstSelect.innerHTML : '<option value="">(no filter)</option>';
+
+                const row = document.createElement('div');
+                row.className = 'row g-2 align-items-end rb-filter-row';
+                row.setAttribute('data-rb-index', String(index));
+                row.innerHTML = `
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="rbCol_${index}">Column</label>
+                        <select class="form-select form-select-sm" id="rbCol_${index}" name="rbCol" data-rb-index="${index}">${optionsHtml}</select>
+                    </div>
+                    <div class="col-12 col-md-2">
+                        <label class="form-label" for="rbMatch_${index}">Match</label>
+                        <select class="form-select form-select-sm" id="rbMatch_${index}" name="rbMatch" data-rb-index="${index}">
+                            <option value="eq" selected>Equals</option>
+                            <option value="contains">Contains</option>
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="rbValue_${index}">Value</label>
+                        <input class="form-control form-control-sm" id="rbValue_${index}" name="rbValue" value="" placeholder="Choose or type" list="rbValues_${index}" data-rb-index="${index}" />
+                        <datalist id="rbValues_${index}"></datalist>
+                    </div>
+                    <div class="col-12 col-md-2 d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" data-rb-remove="${index}">Remove</button>
+                    </div>
+                `;
+
+                container.appendChild(row);
+
+                const newSelect = document.getElementById(`rbCol_${index}`);
+                if (newSelect) newSelect.value = '';
+                const newMatch = document.getElementById(`rbMatch_${index}`);
+                if (newMatch) newMatch.value = 'eq';
+
+                wireRow(index);
+                fillDatalist(index);
+            }
+
+            Array.from(document.querySelectorAll('.rb-filter-row[data-rb-index]')).forEach(r => {
+                const index = parseInt(r.getAttribute('data-rb-index') || '0', 10);
+                wireRow(index);
+                fillDatalist(index);
+            });
+
+            const addBtn = document.getElementById('rbAddFilter');
+            if (addBtn) {
+                addBtn.addEventListener('click', addRow);
+            }
+        })();
+    </script>
 }
 
 @functions {
@@ -194,6 +415,8 @@ else
         string currentDir,
         int version,
         IReadOnlyList<string> selectedCols,
+        string referenceBookQuery,
+        bool canFilterByReferenceBooks,
         bool showUploaded,
         bool showFile,
         bool showUploadId,
@@ -218,6 +441,8 @@ else
         var colsQuery = selectedCols.Count == 0
             ? string.Empty
             : string.Concat(selectedCols.Select(c => $"&cols={Uri.EscapeDataString(c)}"));
+
+        var rbQuery = referenceBookQuery ?? string.Empty;
 
         var hasHeader = allNodes.Count > 0;
         var minRow = hasHeader ? allNodes.Min(n => n.RowStart) : 1;
@@ -274,6 +499,21 @@ else
             btnCols.InnerHtml.Append("Columns");
             tools.InnerHtml.AppendHtml(btnCols);
 
+            if (canFilterByReferenceBooks)
+            {
+                var btnFilters = new TagBuilder("button");
+                btnFilters.AddCssClass("btn");
+                btnFilters.AddCssClass("btn-outline-secondary");
+                btnFilters.AddCssClass("btn-sm");
+                btnFilters.Attributes["type"] = "button";
+                btnFilters.Attributes["data-bs-toggle"] = "collapse";
+                btnFilters.Attributes["data-bs-target"] = "#rbFilterPanel";
+                btnFilters.Attributes["aria-expanded"] = "false";
+                btnFilters.Attributes["aria-controls"] = "rbFilterPanel";
+                btnFilters.InnerHtml.Append("Filters");
+                tools.InnerHtml.AppendHtml(btnFilters);
+            }
+
             var aReset = new TagBuilder("a");
             aReset.AddCssClass("btn");
             aReset.AddCssClass("btn-link");
@@ -323,7 +563,7 @@ else
 
                 var th = new TagBuilder("th");
                 var a = new TagBuilder("a");
-                a.Attributes["href"] = $"?version={version}&sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}{colsQuery}";
+                a.Attributes["href"] = $"?version={version}&sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}{colsQuery}{rbQuery}";
                 a.InnerHtml.Append(col.Name);
                 th.InnerHtml.AppendHtml(a);
                 tr.InnerHtml.AppendHtml(th);
@@ -414,7 +654,7 @@ else
                         : "asc";
 
                     var a = new TagBuilder("a");
-                    a.Attributes["href"] = $"?version={version}&sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}{colsQuery}";
+                    a.Attributes["href"] = $"?version={version}&sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}{colsQuery}{rbQuery}";
                     a.InnerHtml.Append(n.Label);
 
                     th.InnerHtml.AppendHtml(a);

@@ -68,3 +68,82 @@ public sealed class ODataColumn
     public string? ColumnNumber { get; init; }
     public ColumnType Type { get; init; }
 }
+
+public sealed class ODataReferenceBook
+{
+    public required string Id { get; init; }
+
+    public required string FormNumber { get; init; }
+    public required int Version { get; init; }
+
+    public bool IsPending { get; init; }
+    public string? PendingId { get; init; }
+
+    public string? DisplayFormNumber { get; init; }
+    public string? DisplayFormTitle { get; init; }
+
+    public required string ReferenceBookId { get; init; }
+    public required string Title { get; init; }
+
+    public required string SourceFormula { get; init; }
+    public string? SourceSheet { get; init; }
+    public string? SourceRange { get; init; }
+
+    public int ValueCount { get; init; }
+
+    public ICollection<string> AppliedTo { get; init; } = Array.Empty<string>();
+    public ICollection<string> Values { get; init; } = Array.Empty<string>();
+
+    public static ODataReferenceBook FromCommitted(
+        string formNumber,
+        int version,
+        FormMeta? meta,
+        ReferenceBook book)
+    {
+        return new ODataReferenceBook
+        {
+            Id = ODataKeys.ReferenceBookKey(formNumber, version, book.Id),
+            FormNumber = formNumber,
+            Version = version,
+            IsPending = false,
+            PendingId = null,
+            DisplayFormNumber = meta?.DisplayFormNumber,
+            DisplayFormTitle = meta?.DisplayFormTitle,
+            ReferenceBookId = book.Id,
+            Title = book.Title,
+            SourceFormula = book.SourceFormula,
+            SourceSheet = book.SourceSheet,
+            SourceRange = book.SourceRange,
+            ValueCount = book.Values.Count,
+            AppliedTo = book.AppliedTo.ToArray(),
+            Values = book.Values.ToArray(),
+        };
+    }
+
+    public static ODataReferenceBook FromPending(
+        string formNumber,
+        int intendedVersion,
+        string pendingId,
+        FormMeta? meta,
+        ReferenceBook book)
+    {
+        return new ODataReferenceBook
+        {
+            Id = ODataKeys.PendingReferenceBookKey(formNumber, pendingId, book.Id),
+            FormNumber = formNumber,
+            Version = intendedVersion,
+            IsPending = true,
+            PendingId = pendingId,
+            DisplayFormNumber = meta?.DisplayFormNumber,
+            DisplayFormTitle = meta?.DisplayFormTitle,
+            ReferenceBookId = book.Id,
+            Title = book.Title,
+            SourceFormula = book.SourceFormula,
+            SourceSheet = book.SourceSheet,
+            SourceRange = book.SourceRange,
+            ValueCount = book.Values.Count,
+            AppliedTo = book.AppliedTo.ToArray(),
+            Values = book.Values.ToArray(),
+        };
+    }
+}

@@ -76,6 +76,18 @@ public sealed class ExcelFormParser
             var columns = BuildColumns(headerResult.Nodes);
             var leafColumns = BuildLeafColumns(headerResult.Nodes);
 
+            // Infer column types from Excel Data Validation (List).
+            // If any leaf column has a list validation applied to it, treat it as a reference book column.
+            var refBookLeafCols = DetectReferenceBookLeafColumns(ws, leafColumns);
+            if (refBookLeafCols.Count > 0)
+            {
+                columns = columns
+                    .Select((c, i) => i < leafColumns.Count && refBookLeafCols.Contains(leafColumns[i])
+                        ? c with { Type = ColumnType.ReferenceBook }
+                        : c)
+                    .ToArray();
+            }
+
             // Some forms include an extra header row with column indices (1..N).
             // We keep the header tree unchanged (so the index row is not shown as a header label),
             // but extend the header boundary so data rows start after the index row.
@@ -332,6 +344,35 @@ public sealed class ExcelFormParser
         }
 
         return value.ToString();
+    }
+
+    private static HashSet<int> DetectReferenceBookLeafColumns(IXLWorksheet ws, IReadOnlyList<int> leafColumns)
+    {
+        var leafSet = new HashSet<int>(leafColumns);
+        var result = new HashSet<int>();
+
+        foreach (var dv in ws.DataValidations)
+        {
+            if (dv.AllowedValues != XLAllowedValues.List)
+            {
+                continue;
+            }
+
+            // If this is a list validation (explicit list or range-based), treat it as a reference book.
+            foreach (var r in dv.Ranges)
+            {
+                var addr = r.RangeAddress;
+                for (var c = addr.FirstAddress.ColumnNumber; c <= addr.LastAddress.ColumnNumber; c++)
+                {
+                    if (leafSet.Contains(c))
+                    {
+                        result.Add(c);
+                    }
+                }
+            }
+        }
+
+        return result;
     }
 
     private static bool TryResolveListSource(

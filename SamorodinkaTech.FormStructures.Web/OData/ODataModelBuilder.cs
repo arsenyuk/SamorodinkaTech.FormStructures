@@ -24,6 +24,10 @@ public static class ODataModelBuilder
         cols.EntityType.HasKey(x => x.Id);
         cols.EntityType.Name = "DataColumn";
 
+        var refbooks = builder.EntitySet<ODataReferenceBook>("ReferenceBooks");
+        refbooks.EntityType.HasKey(x => x.Id);
+        refbooks.EntityType.Name = "ReferenceBook";
+
         // Navigation properties are discovered from CLR properties.
 
         return builder.GetEdmModel();

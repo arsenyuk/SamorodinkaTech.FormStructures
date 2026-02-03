@@ -3,6 +3,7 @@ using Microsoft.AspNetCore.Mvc.RazorPages;
 using ClosedXML.Excel;
 using SamorodinkaTech.FormStructures.Web.Models;
 using SamorodinkaTech.FormStructures.Web.Services;
+using System.Text.Json;
 
 namespace SamorodinkaTech.FormStructures.Web.Pages.Forms;
 
@@ -36,6 +37,24 @@ public class AggregatedModel : PageModel
     public string SortKey { get; private set; } = "uploaded";
     public string SortDir { get; private set; } = "desc";
 
+    public IReadOnlyList<ColumnDefinition> FilterColumns { get; private set; } = Array.Empty<ColumnDefinition>();
+    public IReadOnlyList<ColumnDefinition> ReferenceBookColumns { get; private set; } = Array.Empty<ColumnDefinition>();
+    public IReadOnlyList<ReferenceBookFilterInput> ReferenceBookFilterInputs { get; private set; } = Array.Empty<ReferenceBookFilterInput>();
+    public IReadOnlyList<ReferenceBookFilter> AppliedReferenceBookFilters { get; private set; } = Array.Empty<ReferenceBookFilter>();
+
+    public string ReferenceBookValuesJson { get; private set; } = "{}";
+    public int TotalRowCount { get; private set; }
+    public int FilteredRowCount { get; private set; }
+
+    public string ReferenceBookQuery
+        => AppliedReferenceBookFilters.Count == 0
+            ? string.Empty
+            : string.Concat(AppliedReferenceBookFilters.Select(f =>
+                string.Concat(
+                    "&rbCol=", Uri.EscapeDataString(f.Column),
+                    "&rbValue=", Uri.EscapeDataString(f.Value),
+                    "&rbMatch=", Uri.EscapeDataString(ToQueryToken(f.Match)))));
+
     public bool ShowUploadedColumn { get; private set; }
     public bool ShowFileColumn { get; private set; }
     public bool ShowUploadIdColumn { get; private set; }
@@ -62,9 +81,12 @@ public class AggregatedModel : PageModel
         int? version = null,
         string? sort = null,
         string? dir = null,
-        string[]? cols = null)
+        string[]? cols = null,
+        string[]? rbCol = null,
+        string[]? rbValue = null,
+        string[]? rbMatch = null)
     {
-        var loadResult = TryLoad(formNumber, version, sort, dir, cols);
+        var loadResult = TryLoad(formNumber, version, sort, dir, cols, rbCol, rbValue, rbMatch);
         if (loadResult is not null)
         {
             return loadResult;
@@ -79,9 +101,12 @@ public class AggregatedModel : PageModel
         string? sort = null,
         string? dir = null,
         string[]? cols = null,
+        string[]? rbCol = null,
+        string[]? rbValue = null,
+        string[]? rbMatch = null,
         CancellationToken ct = default)
     {
-        var loadResult = TryLoad(formNumber, version, sort, dir, cols);
+        var loadResult = TryLoad(formNumber, version, sort, dir, cols, rbCol, rbValue, rbMatch);
         if (loadResult is not null)
         {
             return loadResult;
@@ -108,7 +133,8 @@ public class AggregatedModel : PageModel
                            $"?version={result.Version}" +
                            $"&sort={Uri.EscapeDataString(SortKey)}" +
                            $"&dir={Uri.EscapeDataString(SortDir)}" +
-                           SelectedColsQuery;
+                           SelectedColsQuery +
+                           ReferenceBookQuery;
             return Redirect(redirect);
         }
         catch (FormParseException ex)
@@ -138,9 +164,12 @@ public class AggregatedModel : PageModel
         int? version = null,
         string? sort = null,
         string? dir = null,
-        string[]? cols = null)
+        string[]? cols = null,
+        string[]? rbCol = null,
+        string[]? rbValue = null,
+        string[]? rbMatch = null)
     {
-        var loadResult = TryLoad(formNumber, version, sort, dir, cols);
+        var loadResult = TryLoad(formNumber, version, sort, dir, cols, rbCol, rbValue, rbMatch);
         if (loadResult is not null)
         {
             return loadResult;
@@ -171,7 +200,10 @@ public class AggregatedModel : PageModel
         int? version,
         string? sort,
         string? dir,
-        string[]? cols)
+        string[]? cols,
+        string[]? rbCol,
+        string[]? rbValue,
+        string[]? rbMatch)
     {
         if (string.IsNullOrWhiteSpace(formNumber))
         {
@@ -200,6 +232,15 @@ public class AggregatedModel : PageModel
             return NotFound();
         }
 
+        // Column selection affects both what we display and what we offer in the filter UI.
+        ApplyColumnSelection(Structure, cols);
+        FilterColumns = VisibleColumns;
+
+        // Reference-book filtering is based on stored reference-books.json (AppliedTo ranges),
+        // and also supports schemas where column types were already marked as ReferenceBook.
+        var referenceBooksEarly = _formStorage.TryLoadReferenceBooks(FormNumber, Version);
+        ReferenceBookColumns = ExtractFilterableReferenceBookColumns(Structure, referenceBooksEarly);
+
         var uploads = _dataStorage.ListUploads(FormNumber, Version);
         UploadCount = uploads.Count;
 
@@ -224,13 +265,376 @@ public class AggregatedModel : PageModel
             }
         }
 
+        TotalRowCount = rows.Count;
+
+        var referenceBooks = referenceBooksEarly;
+        ReferenceBookValuesJson = BuildReferenceBookValuesJson(Structure, ReferenceBookColumns, referenceBooks, rows);
+        ReferenceBookFilterInputs = BuildReferenceBookFilterInputs(rbCol, rbValue, rbMatch);
+
+        var applied = new List<ReferenceBookFilter>();
+        foreach (var input in ReferenceBookFilterInputs)
+        {
+            if (!TryResolveColumnPath(Structure, input.Column, out var colToken, out var colPath))
+            {
+                continue;
+            }
+
+            var needle = (input.Value ?? string.Empty).Trim();
+            if (needle.Length == 0)
+            {
+                continue;
+            }
+
+            var match = NormalizeMatch(input.Match);
+            applied.Add(new ReferenceBookFilter(colToken, needle, match));
+            rows = rows
+                .Where(r => MatchesFilter(r, colPath, needle, match))
+                .ToList();
+        }
+
+        AppliedReferenceBookFilters = applied;
+
+        FilteredRowCount = rows.Count;
+
         SortKey = string.IsNullOrWhiteSpace(sort) ? "uploaded" : sort;
         SortDir = string.Equals(dir, "asc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc";
 
         Rows = ApplySort(rows, Structure, SortKey, SortDir);
-
-        ApplyColumnSelection(Structure, cols);
         return null;
+    }
+
+    private static bool TryResolveColumnPath(
+        FormStructure structure,
+        string? colTokenInput,
+        out string colToken,
+        out string colPath)
+    {
+        colToken = string.Empty;
+        colPath = string.Empty;
+
+        var token = (colTokenInput ?? string.Empty).Trim();
+        if (token.Length == 0)
+        {
+            return false;
+        }
+
+        if (!token.StartsWith("c", StringComparison.OrdinalIgnoreCase)
+            || !int.TryParse(token[1..], out var colIndex)
+            || colIndex < 1
+            || colIndex > structure.Columns.Count)
+        {
+            return false;
+        }
+
+        var col = structure.Columns[colIndex - 1];
+        colToken = $"c{colIndex}";
+        colPath = col.Path;
+        return true;
+    }
+
+    private static IReadOnlyList<ColumnDefinition> ExtractFilterableReferenceBookColumns(
+        FormStructure structure,
+        IReadOnlyList<ReferenceBook> books)
+    {
+        var idx = new HashSet<int>();
+
+        foreach (var c in structure.Columns)
+        {
+            if (c.Type == ColumnType.ReferenceBook)
+            {
+                idx.Add(c.Index);
+            }
+        }
+
+        var leafCols = ExtractLeafColumns(structure.Header);
+        var hasLeafMapping = leafCols.Count == structure.Columns.Count;
+        if (hasLeafMapping)
+        {
+            foreach (var b in books)
+            {
+                foreach (var appliedTo in b.AppliedTo)
+                {
+                    if (!TryParseA1ColumnSpan(appliedTo, out var colStart, out var colEnd))
+                    {
+                        continue;
+                    }
+
+                    for (var i = 0; i < leafCols.Count; i++)
+                    {
+                        var leafCol = leafCols[i];
+                        if (leafCol < colStart || leafCol > colEnd)
+                        {
+                            continue;
+                        }
+
+                        idx.Add(i + 1);
+                    }
+                }
+            }
+        }
+
+        return structure.Columns
+            .Where(c => idx.Contains(c.Index))
+            .OrderBy(c => c.Index)
+            .ToArray();
+    }
+
+    private static bool MatchesFilter(AggregatedRow row, string colPath, string needle, ReferenceBookMatch match)
+    {
+        if (!row.Values.TryGetValue(colPath, out var value) || string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var hay = value.Trim();
+        return match switch
+        {
+            ReferenceBookMatch.Equals => string.Equals(hay, needle, StringComparison.OrdinalIgnoreCase),
+            ReferenceBookMatch.Contains => hay.Contains(needle, StringComparison.OrdinalIgnoreCase),
+            _ => string.Equals(hay, needle, StringComparison.OrdinalIgnoreCase)
+        };
+    }
+
+    public sealed record ReferenceBookFilterInput(string? Column, string? Value, string? Match);
+    public sealed record ReferenceBookFilter(string Column, string Value, ReferenceBookMatch Match);
+
+    public enum ReferenceBookMatch
+    {
+        Equals = 0,
+        Contains = 1
+    }
+
+    private static ReferenceBookMatch NormalizeMatch(string? match)
+        => string.Equals(match?.Trim(), "contains", StringComparison.OrdinalIgnoreCase)
+            ? ReferenceBookMatch.Contains
+            : ReferenceBookMatch.Equals;
+
+    private static string ToQueryToken(ReferenceBookMatch match)
+        => match == ReferenceBookMatch.Contains ? "contains" : "eq";
+
+    private static IReadOnlyList<ReferenceBookFilterInput> BuildReferenceBookFilterInputs(
+        string[]? rbCols,
+        string[]? rbValues,
+        string[]? rbMatches)
+    {
+        var count = Math.Max(rbCols?.Length ?? 0, rbValues?.Length ?? 0);
+        count = Math.Max(count, rbMatches?.Length ?? 0);
+        count = Math.Max(1, count);
+
+        count = Math.Min(count, 20);
+
+        var result = new List<ReferenceBookFilterInput>(count);
+        for (var i = 0; i < count; i++)
+        {
+            var c = rbCols is not null && i < rbCols.Length ? rbCols[i] : null;
+            var v = rbValues is not null && i < rbValues.Length ? rbValues[i] : null;
+            var m = rbMatches is not null && i < rbMatches.Length ? rbMatches[i] : null;
+            result.Add(new ReferenceBookFilterInput(c, v, m));
+        }
+
+        return result;
+    }
+
+    private static string BuildReferenceBookValuesJson(
+        FormStructure structure,
+        IReadOnlyList<ColumnDefinition> referenceBookColumns,
+        IReadOnlyList<ReferenceBook> books,
+        IReadOnlyList<AggregatedRow> rows)
+    {
+        var valuesByToken = BuildReferenceBookValuesByToken(structure, referenceBookColumns, books, rows);
+        return JsonSerializer.Serialize(valuesByToken);
+    }
+
+    private static Dictionary<string, IReadOnlyList<string>> BuildReferenceBookValuesByToken(
+        FormStructure structure,
+        IReadOnlyList<ColumnDefinition> referenceBookColumns,
+        IReadOnlyList<ReferenceBook> books,
+        IReadOnlyList<AggregatedRow> rows)
+    {
+        var leafCols = ExtractLeafColumns(structure.Header);
+        var hasLeafMapping = leafCols.Count == structure.Columns.Count;
+
+        var map = new Dictionary<string, HashSet<string>>(StringComparer.OrdinalIgnoreCase);
+
+        if (hasLeafMapping)
+        {
+            foreach (var b in books)
+            {
+                foreach (var appliedTo in b.AppliedTo)
+                {
+                    if (!TryParseA1ColumnSpan(appliedTo, out var colStart, out var colEnd))
+                    {
+                        continue;
+                    }
+
+                    for (var i = 0; i < leafCols.Count; i++)
+                    {
+                        var leafCol = leafCols[i];
+                        if (leafCol < colStart || leafCol > colEnd)
+                        {
+                            continue;
+                        }
+
+                        var token = $"c{i + 1}";
+                        if (!map.TryGetValue(token, out var set))
+                        {
+                            set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                            map[token] = set;
+                        }
+
+                        foreach (var v in b.Values)
+                        {
+                            if (!string.IsNullOrWhiteSpace(v))
+                            {
+                                set.Add(v.Trim());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        foreach (var col in referenceBookColumns)
+        {
+            var idx = col.Index - 1;
+            if (idx < 0 || idx >= structure.Columns.Count)
+            {
+                continue;
+            }
+
+            var token = $"c{col.Index}";
+            if (!map.TryGetValue(token, out var set) || set.Count == 0)
+            {
+                set = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                map[token] = set;
+
+                foreach (var r in rows)
+                {
+                    if (r.Values.TryGetValue(col.Path, out var raw) && !string.IsNullOrWhiteSpace(raw))
+                    {
+                        set.Add(raw.Trim());
+                    }
+                }
+            }
+        }
+
+        var result = new Dictionary<string, IReadOnlyList<string>>(StringComparer.OrdinalIgnoreCase);
+        foreach (var (token, set) in map)
+        {
+            result[token] = set.OrderBy(x => x, StringComparer.OrdinalIgnoreCase).ToArray();
+        }
+
+        return result;
+    }
+
+    private static List<int> ExtractLeafColumns(IReadOnlyList<HeaderNode> roots)
+    {
+        var cols = new List<int>();
+
+        void Walk(HeaderNode node)
+        {
+            if (node.Children.Count == 0)
+            {
+                cols.Add(node.ColStart);
+                return;
+            }
+
+            foreach (var child in node.Children.OrderBy(c => c.ColStart).ThenBy(c => c.RowStart))
+            {
+                Walk(child);
+            }
+        }
+
+        foreach (var root in roots.OrderBy(r => r.ColStart).ThenBy(r => r.RowStart))
+        {
+            Walk(root);
+        }
+
+        return cols;
+    }
+
+    private static bool TryParseA1ColumnSpan(string appliedTo, out int colStart, out int colEnd)
+    {
+        colStart = 0;
+        colEnd = 0;
+
+        if (string.IsNullOrWhiteSpace(appliedTo))
+        {
+            return false;
+        }
+
+        var s = appliedTo;
+        var bang = s.IndexOf('!');
+        if (bang >= 0)
+        {
+            s = s[(bang + 1)..];
+        }
+
+        var parts = s.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return false;
+        }
+
+        if (!TryParseA1Col(parts[0], out colStart))
+        {
+            return false;
+        }
+
+        colEnd = colStart;
+        if (parts.Length >= 2 && TryParseA1Col(parts[1], out var end))
+        {
+            colEnd = end;
+        }
+
+        if (colEnd < colStart)
+        {
+            (colStart, colEnd) = (colEnd, colStart);
+        }
+
+        return colStart > 0 && colEnd > 0;
+    }
+
+    private static bool TryParseA1Col(string a1, out int col)
+    {
+        col = 0;
+
+        if (string.IsNullOrWhiteSpace(a1))
+        {
+            return false;
+        }
+
+        var s = a1.Trim();
+        if (s.StartsWith("$", StringComparison.Ordinal))
+        {
+            s = s[1..];
+        }
+
+        var i = 0;
+        while (i < s.Length && char.IsLetter(s[i]))
+        {
+            i++;
+        }
+
+        if (i == 0)
+        {
+            return false;
+        }
+
+        var letters = s[..i].ToUpperInvariant();
+        var value = 0;
+        foreach (var ch in letters)
+        {
+            if (ch < 'A' || ch > 'Z')
+            {
+                return false;
+            }
+
+            value = (value * 26) + (ch - 'A' + 1);
+        }
+
+        col = value;
+        return col > 0;
     }
 
     private static XLWorkbook BuildAggregatedWorkbook(

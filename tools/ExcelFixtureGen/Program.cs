@@ -12,6 +12,7 @@ static void PrintUsage()
 static IReadOnlyList<string> ListFixtures() => new[]
 {
     "REFBOOK-001",
+    "REFBOOK-002",
     "BOTTOM-MERGED-001",
 };
 
@@ -20,6 +21,7 @@ static byte[] BuildFixture(string name)
     return name.ToUpperInvariant() switch
     {
         "REFBOOK-001" => BuildRefbook001(),
+        "REFBOOK-002" => BuildRefbook002(),
         "BOTTOM-MERGED-001" => BuildBottomMerged001(),
         _ => throw new ArgumentException($"Unknown fixture: {name}")
     };
@@ -46,6 +48,52 @@ static byte[] BuildRefbook001()
 
     // Cross-sheet list source as an explicit formula.
     dv.List("=Lists!$A$1:$A$3");
+
+    using var ms = new MemoryStream();
+    wb.SaveAs(ms);
+    return ms.ToArray();
+}
+
+static byte[] BuildRefbook002()
+{
+    using var wb = new XLWorkbook();
+
+    var form = wb.AddWorksheet("Form");
+    form.Cell(1, 1).Value = "REFBOOK-002";
+    form.Cell(2, 1).Value = "Form with two reference books";
+
+    // Simple 1-row header (row 3), 2 leaf columns.
+    form.Cell(3, 1).Value = "Color";
+    form.Cell(3, 2).Value = "Size";
+
+    var lists = wb.AddWorksheet("Lists");
+    // Two different reference books (distinct ranges).
+    lists.Cell(1, 1).Value = "Red";
+    lists.Cell(2, 1).Value = "Green";
+    lists.Cell(3, 1).Value = "Blue";
+
+    lists.Cell(1, 2).Value = "S";
+    lists.Cell(2, 2).Value = "M";
+    lists.Cell(3, 2).Value = "L";
+
+    // Apply list validations to two different columns.
+    var colorCell = form.Cell(5, 1);
+    var colorDv = colorCell.CreateDataValidation();
+    colorDv.AllowedValues = XLAllowedValues.List;
+    colorDv.InCellDropdown = true;
+    colorDv.List("=Lists!$A$1:$A$3");
+
+    var sizeCell = form.Cell(5, 2);
+    var sizeDv = sizeCell.CreateDataValidation();
+    sizeDv.AllowedValues = XLAllowedValues.List;
+    sizeDv.InCellDropdown = true;
+    sizeDv.List("=Lists!$B$1:$B$3");
+
+    // Put a couple of data rows.
+    form.Cell(5, 1).Value = "Red";
+    form.Cell(5, 2).Value = "M";
+    form.Cell(6, 1).Value = "Blue";
+    form.Cell(6, 2).Value = "S";
 
     using var ms = new MemoryStream();
     wb.SaveAs(ms);

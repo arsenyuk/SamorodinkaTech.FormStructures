@@ -47,12 +47,174 @@ public class PendingTypesModel : PageModel
 
         IntendedVersion = PendingUpload.Meta.IntendedVersion;
 
+        var inferredRefBookPaths = InferReferenceBookColumnPaths(PendingUpload.Structure, PendingReferenceBooks);
+
         TypeEdits = PendingUpload.Structure.Columns
             .OrderBy(c => c.Index)
-            .Select(c => new ColumnTypeEditRow { Path = c.Path, Type = c.Type })
+            .Select(c => new ColumnTypeEditRow
+            {
+                Path = c.Path,
+                Type = inferredRefBookPaths.Contains(c.Path)
+                    ? ColumnType.ReferenceBook
+                    : c.Type
+            })
             .ToList();
 
         return Page();
+    }
+
+    private static HashSet<string> InferReferenceBookColumnPaths(FormStructure structure, IReadOnlyList<ReferenceBook> books)
+    {
+        var leafCols = ExtractLeafColumns(structure.Header);
+        if (leafCols.Count != structure.Columns.Count)
+        {
+            return new HashSet<string>(StringComparer.Ordinal);
+        }
+
+        var refLeafCols = new HashSet<int>();
+
+        foreach (var b in books)
+        {
+            foreach (var applied in b.AppliedTo)
+            {
+                if (!TryParseA1ColumnSpan(applied, out var colStart, out var colEnd))
+                {
+                    continue;
+                }
+
+                for (var i = 0; i < leafCols.Count; i++)
+                {
+                    var leafCol = leafCols[i];
+                    if (leafCol >= colStart && leafCol <= colEnd)
+                    {
+                        refLeafCols.Add(leafCol);
+                    }
+                }
+            }
+        }
+
+        var result = new HashSet<string>(StringComparer.Ordinal);
+        for (var i = 0; i < structure.Columns.Count; i++)
+        {
+            if (refLeafCols.Contains(leafCols[i]))
+            {
+                result.Add(structure.Columns[i].Path);
+            }
+        }
+
+        return result;
+    }
+
+    private static List<int> ExtractLeafColumns(IReadOnlyList<HeaderNode> roots)
+    {
+        var cols = new List<int>();
+
+        void Walk(HeaderNode node)
+        {
+            if (node.Children.Count == 0)
+            {
+                cols.Add(node.ColStart);
+                return;
+            }
+
+            foreach (var child in node.Children.OrderBy(c => c.ColStart).ThenBy(c => c.RowStart))
+            {
+                Walk(child);
+            }
+        }
+
+        foreach (var root in roots.OrderBy(r => r.ColStart).ThenBy(r => r.RowStart))
+        {
+            Walk(root);
+        }
+
+        return cols;
+    }
+
+    private static bool TryParseA1ColumnSpan(string appliedTo, out int colStart, out int colEnd)
+    {
+        colStart = 0;
+        colEnd = 0;
+
+        if (string.IsNullOrWhiteSpace(appliedTo))
+        {
+            return false;
+        }
+
+        // Format examples: "Sheet1!$C$4:$C$100", "Sheet1!C4:D10".
+        var s = appliedTo;
+        var bang = s.IndexOf('!');
+        if (bang >= 0)
+        {
+            s = s[(bang + 1)..];
+        }
+
+        var parts = s.Split(':', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0)
+        {
+            return false;
+        }
+
+        if (!TryParseA1Col(parts[0], out colStart))
+        {
+            return false;
+        }
+
+        colEnd = colStart;
+        if (parts.Length >= 2 && TryParseA1Col(parts[1], out var end))
+        {
+            colEnd = end;
+        }
+
+        if (colEnd < colStart)
+        {
+            (colStart, colEnd) = (colEnd, colStart);
+        }
+
+        return colStart > 0 && colEnd > 0;
+    }
+
+    private static bool TryParseA1Col(string a1, out int col)
+    {
+        col = 0;
+
+        if (string.IsNullOrWhiteSpace(a1))
+        {
+            return false;
+        }
+
+        var s = a1.Trim();
+        if (s.StartsWith("$", StringComparison.Ordinal))
+        {
+            s = s[1..];
+        }
+
+        // Read leading column letters.
+        var i = 0;
+        while (i < s.Length && char.IsLetter(s[i]))
+        {
+            i++;
+        }
+
+        if (i == 0)
+        {
+            return false;
+        }
+
+        var letters = s[..i].ToUpperInvariant();
+        var value = 0;
+        foreach (var ch in letters)
+        {
+            if (ch < 'A' || ch > 'Z')
+            {
+                return false;
+            }
+
+            value = (value * 26) + (ch - 'A' + 1);
+        }
+
+        col = value;
+        return col > 0;
     }
 
     public async Task<IActionResult> OnPostSaveTypesAsync(string formNumber, string pendingId, CancellationToken ct)

@@ -86,6 +86,96 @@ public static class ODataKeys
         return $"c:{uploadKey}:{index}";
     }
 
+    public static string ReferenceBookKey(string formNumber, int version, string referenceBookId)
+    {
+        return $"b:c:{B64(formNumber)}:{version}:{B64(referenceBookId)}";
+    }
+
+    public static string PendingReferenceBookKey(string formNumber, string pendingId, string referenceBookId)
+    {
+        return $"b:p:{B64(formNumber)}:{B64(pendingId)}:{B64(referenceBookId)}";
+    }
+
+    public static bool TryParseReferenceBookKey(
+        string key,
+        out bool isPending,
+        out string formNumber,
+        out int version,
+        out string pendingId,
+        out string referenceBookId)
+    {
+        isPending = false;
+        formNumber = string.Empty;
+        pendingId = string.Empty;
+        referenceBookId = string.Empty;
+        version = 0;
+
+        if (string.IsNullOrWhiteSpace(key))
+        {
+            return false;
+        }
+
+        var parts = key.Split(':', StringSplitOptions.None);
+        if (parts.Length < 2)
+        {
+            return false;
+        }
+
+        // b:c:{formB64}:{version}:{bookIdB64}
+        if (parts.Length == 5
+            && string.Equals(parts[0], "b", StringComparison.Ordinal)
+            && string.Equals(parts[1], "c", StringComparison.Ordinal))
+        {
+            if (!TryUnb64(parts[2], out formNumber))
+            {
+                return false;
+            }
+
+            if (!int.TryParse(parts[3], out version) || version <= 0)
+            {
+                return false;
+            }
+
+            if (!TryUnb64(parts[4], out referenceBookId))
+            {
+                return false;
+            }
+
+            isPending = false;
+            pendingId = string.Empty;
+            return !string.IsNullOrWhiteSpace(formNumber) && !string.IsNullOrWhiteSpace(referenceBookId);
+        }
+
+        // b:p:{formB64}:{pendingIdB64}:{bookIdB64}
+        if (parts.Length == 5
+            && string.Equals(parts[0], "b", StringComparison.Ordinal)
+            && string.Equals(parts[1], "p", StringComparison.Ordinal))
+        {
+            if (!TryUnb64(parts[2], out formNumber))
+            {
+                return false;
+            }
+
+            if (!TryUnb64(parts[3], out pendingId))
+            {
+                return false;
+            }
+
+            if (!TryUnb64(parts[4], out referenceBookId))
+            {
+                return false;
+            }
+
+            isPending = true;
+            version = 0;
+            return !string.IsNullOrWhiteSpace(formNumber)
+                   && !string.IsNullOrWhiteSpace(pendingId)
+                   && !string.IsNullOrWhiteSpace(referenceBookId);
+        }
+
+        return false;
+    }
+
     private static string B64(string value)
     {
         var bytes = Encoding.UTF8.GetBytes(value ?? string.Empty);

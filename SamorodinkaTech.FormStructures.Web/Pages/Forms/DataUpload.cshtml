@@ -4,6 +4,12 @@
 @model SamorodinkaTech.FormStructures.Web.Pages.Forms.DataUploadModel
 @{
     ViewData["Title"] = $"Upload #{Model.FormNumber} v{Model.Version}";
+    var rbHasFilter = Model.AppliedReferenceBookFilters.Count > 0;
+    var rbClearHref = $"?sort={Uri.EscapeDataString(Model.SortKey)}&dir={Uri.EscapeDataString(Model.SortDir)}";
+    var aggHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/aggregated" +
+                  (rbHasFilter
+                      ? $"?{Model.ReferenceBookQuery.TrimStart('&')}"
+                      : string.Empty);
 }
 
 <div class="d-flex align-items-center justify-content-between">
@@ -17,11 +23,32 @@
         </div>
     </div>
     <div class="d-flex gap-2">
-        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/aggregated">Aggregated data</a>
+        <a class="btn btn-outline-secondary btn-sm" href="@aggHref">Aggregated data</a>
         <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">Back to uploads</a>
         <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/v@(Model.Version)/@Uri.EscapeDataString(Model.UploadId)/file">File</a>
         <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Schema</a>
         <a class="btn btn-outline-secondary btn-sm" href="/">Home</a>
+        <div class="dropdown">
+            <button class="btn btn-outline-secondary btn-sm dropdown-toggle" type="button" data-bs-toggle="dropdown" aria-expanded="false">
+                More
+                @if (rbHasFilter)
+                {
+                    <span class="badge text-bg-primary ms-1">@Model.AppliedReferenceBookFilters.Count</span>
+                }
+            </button>
+            <ul class="dropdown-menu dropdown-menu-end">
+                <li>
+                    <button class="dropdown-item" type="button" data-bs-toggle="collapse" data-bs-target="#rbFilterPanel" aria-controls="rbFilterPanel">
+                        Filters...
+                    </button>
+                </li>
+                @if (rbHasFilter)
+                {
+                    <li><hr class="dropdown-divider" /></li>
+                    <li><a class="dropdown-item" href="@rbClearHref">Clear filters</a></li>
+                }
+            </ul>
+        </div>
         <form method="post"
               asp-page-handler="Delete"
               asp-route-formNumber="@Model.FormNumber"
@@ -41,10 +68,76 @@
 }
 else
 {
+    @if (Model.FilterColumns.Count > 0)
+    {
+        <div class="collapse @(rbHasFilter ? "show" : "")" id="rbFilterPanel">
+            <div class="card mb-3">
+                <div class="card-body">
+                    <form method="get">
+                        <input type="hidden" name="sort" value="@Model.SortKey" />
+                        <input type="hidden" name="dir" value="@Model.SortDir" />
+
+                        <div id="rbFilters" class="d-flex flex-column gap-2">
+                            @for (var i = 0; i < Model.ReferenceBookFilterInputs.Count; i++)
+                            {
+                                var input = Model.ReferenceBookFilterInputs[i];
+
+                                <div class="row g-2 align-items-end rb-filter-row" data-rb-index="@i">
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label" for="rbCol_@i">Column</label>
+                                        <select class="form-select form-select-sm" id="rbCol_@i" name="rbCol" data-rb-index="@i">
+                                            <option value="">(no filter)</option>
+                                            @foreach (var c in Model.FilterColumns)
+                                            {
+                                                var token = $"c{c.Index}";
+                                                <option value="@token" selected="@(string.Equals(input.Column, token, StringComparison.OrdinalIgnoreCase) ? "selected" : null)">@c.Name</option>
+                                            }
+                                        </select>
+                                    </div>
+
+                                    <div class="col-12 col-md-2">
+                                        <label class="form-label" for="rbMatch_@i">Match</label>
+                                        <select class="form-select form-select-sm" id="rbMatch_@i" name="rbMatch" data-rb-index="@i">
+                                            <option value="eq" selected="@(string.Equals(input.Match, "contains", StringComparison.OrdinalIgnoreCase) ? null : "selected")">Equals</option>
+                                            <option value="contains" selected="@(string.Equals(input.Match, "contains", StringComparison.OrdinalIgnoreCase) ? "selected" : null)">Contains</option>
+                                        </select>
+                                    </div>
+
+                                    <div class="col-12 col-md-4">
+                                        <label class="form-label" for="rbValue_@i">Value</label>
+                                        <input class="form-control form-control-sm" id="rbValue_@i" name="rbValue" value="@input.Value" placeholder="Choose or type" list="rbValues_@i" data-rb-index="@i" />
+                                        <datalist id="rbValues_@i"></datalist>
+                                    </div>
+
+                                    <div class="col-12 col-md-2 d-flex gap-2">
+                                        <button type="button" class="btn btn-outline-secondary btn-sm" data-rb-remove="@i">Remove</button>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+
+                        <div class="mt-2 d-flex gap-2">
+                            <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+                            <button type="button" class="btn btn-outline-secondary btn-sm" id="rbAddFilter">Add filter</button>
+                            <a class="btn btn-outline-secondary btn-sm" href="@rbClearHref">Clear</a>
+                        </div>
+                    </form>
+
+                    @if (rbHasFilter)
+                    {
+                        <div class="text-muted mt-2">
+                            Showing <strong>@Model.FilteredRowCount</strong> of <strong>@Model.TotalRowCount</strong> row(s).
+                        </div>
+                    }
+                </div>
+            </div>
+        </div>
+    }
+
     <div class="table-responsive">
         <table class="table table-sm table-striped table-bordered align-middle">
             <thead>
-            @RenderHeader(Model.Structure, Model.SortKey, Model.SortDir)
+            @RenderHeader(Model.Structure, Model.SortKey, Model.SortDir, Model.ReferenceBookQuery)
             </thead>
             <tbody>
             @foreach (var row in Model.Data.Rows)
@@ -62,6 +155,128 @@ else
     </div>
 }
 
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script>
+        (() => {
+            const valuesByCol = @Html.Raw(Model.ReferenceBookValuesJson);
+
+            function fillDatalist(index) {
+                const colSelect = document.getElementById(`rbCol_${index}`);
+                const list = document.getElementById(`rbValues_${index}`);
+                if (!colSelect || !list) return;
+
+                list.innerHTML = '';
+                const token = (colSelect.value || '').trim();
+                const values = valuesByCol[token] || [];
+                for (const v of values) {
+                    const opt = document.createElement('option');
+                    opt.value = v;
+                    list.appendChild(opt);
+                }
+            }
+
+            function getNextIndex() {
+                const ids = Array.from(document.querySelectorAll('select[id^="rbCol_"]'))
+                    .map(el => el.id.substring('rbCol_'.length))
+                    .map(x => parseInt(x, 10))
+                    .filter(x => !Number.isNaN(x));
+                if (ids.length === 0) return 0;
+                return Math.max(...ids) + 1;
+            }
+
+            function wireRow(index) {
+                const colSelect = document.getElementById(`rbCol_${index}`);
+                if (colSelect) {
+                    colSelect.addEventListener('change', () => fillDatalist(index));
+                }
+
+                const removeBtn = document.querySelector(`[data-rb-remove="${index}"]`);
+                if (removeBtn) {
+                    removeBtn.addEventListener('click', () => {
+                        const container = document.getElementById('rbFilters');
+                        const row = document.querySelector(`.rb-filter-row[data-rb-index="${index}"]`);
+                        if (!container || !row) return;
+
+                        const rowCount = container.querySelectorAll('.rb-filter-row').length;
+                        if (rowCount <= 1) {
+                            // Keep at least one row: just clear.
+                            const val = document.getElementById(`rbValue_${index}`);
+                            const match = document.getElementById(`rbMatch_${index}`);
+                            if (colSelect) colSelect.value = '';
+                            if (match) match.value = 'eq';
+                            if (val) val.value = '';
+                            fillDatalist(index);
+                            return;
+                        }
+
+                        row.remove();
+                    });
+                }
+            }
+
+            function addRow() {
+                const container = document.getElementById('rbFilters');
+                if (!container) return;
+
+                const index = getNextIndex();
+
+                // Clone options from the first select to keep server-rendered labels.
+                const firstSelect = document.querySelector('select[id^="rbCol_"]');
+                const optionsHtml = firstSelect ? firstSelect.innerHTML : '<option value="">(no filter)</option>';
+
+                const row = document.createElement('div');
+                row.className = 'row g-2 align-items-end rb-filter-row';
+                row.setAttribute('data-rb-index', String(index));
+                row.innerHTML = `
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="rbCol_${index}">Column</label>
+                        <select class="form-select form-select-sm" id="rbCol_${index}" name="rbCol" data-rb-index="${index}">${optionsHtml}</select>
+                    </div>
+                    <div class="col-12 col-md-2">
+                        <label class="form-label" for="rbMatch_${index}">Match</label>
+                        <select class="form-select form-select-sm" id="rbMatch_${index}" name="rbMatch" data-rb-index="${index}">
+                            <option value="eq" selected>Equals</option>
+                            <option value="contains">Contains</option>
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="rbValue_${index}">Value</label>
+                        <input class="form-control form-control-sm" id="rbValue_${index}" name="rbValue" value="" placeholder="Choose or type" list="rbValues_${index}" data-rb-index="${index}" />
+                        <datalist id="rbValues_${index}"></datalist>
+                    </div>
+                    <div class="col-12 col-md-2 d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" data-rb-remove="${index}">Remove</button>
+                    </div>
+                `;
+
+                container.appendChild(row);
+
+                // Ensure it's blank.
+                const newSelect = document.getElementById(`rbCol_${index}`);
+                if (newSelect) newSelect.value = '';
+                const newMatch = document.getElementById(`rbMatch_${index}`);
+                if (newMatch) newMatch.value = 'eq';
+
+                wireRow(index);
+                fillDatalist(index);
+            }
+
+            // Wire existing rows.
+            Array.from(document.querySelectorAll('.rb-filter-row[data-rb-index]')).forEach(r => {
+                const index = parseInt(r.getAttribute('data-rb-index') || '0', 10);
+                wireRow(index);
+                fillDatalist(index);
+            });
+
+            const addBtn = document.getElementById('rbAddFilter');
+            if (addBtn) {
+                addBtn.addEventListener('click', addRow);
+            }
+        })();
+    </script>
+}
+
 @functions {
     private static string ToggleDir(string currentDir) =>
         string.Equals(currentDir, "desc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc";
@@ -69,7 +284,8 @@ else
     private static IHtmlContent RenderHeader(
         SamorodinkaTech.FormStructures.Web.Models.FormStructure structure,
         string currentSort,
-        string currentDir)
+        string currentDir,
+        string referenceBookQuery)
     {
         var allNodes = new List<SamorodinkaTech.FormStructures.Web.Models.HeaderNode>();
 
@@ -100,6 +316,8 @@ else
         {
             leafIndexByColStart[leaves[i].ColStart] = i + 1; // 1-based
         }
+
+        var rbQuery = referenceBookQuery ?? string.Empty;
 
         var header = new HtmlContentBuilder();
 
@@ -141,7 +359,7 @@ else
                         : "asc";
 
                     var a = new TagBuilder("a");
-                    a.Attributes["href"] = $"?sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}";
+                    a.Attributes["href"] = $"?sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}{rbQuery}";
                     a.InnerHtml.Append(n.Label);
 
                     th.InnerHtml.AppendHtml(a);
