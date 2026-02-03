@@ -30,7 +30,7 @@ else
                     <div class="text-muted small">#@it.FormNumber</div>
                 </td>
                 <td>
-                    v@it.Version
+                    v@(it.Version)
                     @if (!string.IsNullOrWhiteSpace(it.PendingId))
                     {
                         <span class="badge text-bg-warning ms-1">pending</span>

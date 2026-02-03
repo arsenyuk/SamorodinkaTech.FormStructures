@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using SamorodinkaTech.FormStructures.Web.Models;
+using ClosedXML.Excel;
 using System.Collections.Concurrent;
 
 namespace SamorodinkaTech.FormStructures.Web.Services;
@@ -188,13 +189,301 @@ public sealed class FormStorage
         try
         {
             var json = File.ReadAllText(path);
-            return System.Text.Json.JsonSerializer.Deserialize<ReferenceBook[]>(json, JsonUtil.StableOptions)
-                   ?? Array.Empty<ReferenceBook>();
+            var books = System.Text.Json.JsonSerializer.Deserialize<ReferenceBook[]>(json, JsonUtil.StableOptions)
+                       ?? Array.Empty<ReferenceBook>();
+
+            var structure = TryLoadStructure(formNumber, version);
+            var originalPath = Path.Combine(GetVersionDir(formNumber, version), "original.xlsx");
+            return EnhanceReferenceBookTitles(originalPath, structure, books);
         }
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to read reference-books.json for {FormNumber} v{Version}", formNumber, version);
             return Array.Empty<ReferenceBook>();
+        }
+    }
+
+    private static IReadOnlyList<ReferenceBook> EnhanceReferenceBookTitles(string? originalXlsxPath, FormStructure? structure, IReadOnlyList<ReferenceBook> books)
+    {
+        if (books.Count == 0)
+        {
+            return books;
+        }
+
+        var withStructureTitles = EnhanceReferenceBookTitlesFromStructure(structure, books);
+
+        if (string.IsNullOrWhiteSpace(originalXlsxPath) || !File.Exists(originalXlsxPath))
+        {
+            return withStructureTitles;
+        }
+
+        try
+        {
+            using var fs = File.OpenRead(originalXlsxPath);
+            using var workbook = new XLWorkbook(fs);
+
+            return withStructureTitles
+                .Select(b => TryEnhanceOneFromSourceRange(workbook, b))
+                .ToArray();
+        }
+        catch
+        {
+            // Best-effort only. If we can't open the template, keep stored titles.
+            return withStructureTitles;
+        }
+    }
+
+    private static IReadOnlyList<ReferenceBook> EnhanceReferenceBookTitlesFromStructure(FormStructure? structure, IReadOnlyList<ReferenceBook> books)
+    {
+        if (structure is null || structure.Columns.Count == 0)
+        {
+            return books;
+        }
+
+        var columnsByIndex = structure.Columns
+            .Where(c => c.Index > 0 && !string.IsNullOrWhiteSpace(c.Name))
+            .ToDictionary(c => c.Index, c => c.Name, EqualityComparer<int>.Default);
+
+        if (columnsByIndex.Count == 0)
+        {
+            return books;
+        }
+
+        return books
+            .Select(b => TryEnhanceOneFromAppliedTo(columnsByIndex, b))
+            .ToArray();
+    }
+
+    private static ReferenceBook TryEnhanceOneFromAppliedTo(IReadOnlyDictionary<int, string> columnsByIndex, ReferenceBook b)
+    {
+        if (columnsByIndex.Count == 0)
+        {
+            return b;
+        }
+
+        if (!TitleLooksTechnical(b))
+        {
+            return b;
+        }
+
+        if (b.AppliedTo is null || b.AppliedTo.Count == 0)
+        {
+            return b;
+        }
+
+        var indices = new SortedSet<int>();
+        foreach (var a in b.AppliedTo)
+        {
+            if (!TryParseColumnIndexFromA1Range(a, out var colIndex))
+            {
+                continue;
+            }
+
+            if (columnsByIndex.ContainsKey(colIndex))
+            {
+                indices.Add(colIndex);
+            }
+        }
+
+        if (indices.Count == 0)
+        {
+            return b;
+        }
+
+        var titles = indices
+            .Select(i => columnsByIndex.TryGetValue(i, out var name) ? name?.Trim() : null)
+            .Where(x => !string.IsNullOrWhiteSpace(x))
+            .Select(x => x!)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (titles.Length == 0)
+        {
+            return b;
+        }
+
+        if (titles.Length == 1)
+        {
+            return b with { Title = titles[0] };
+        }
+
+        return b with { Title = string.Join(", ", titles) };
+    }
+
+    private static bool TryParseColumnIndexFromA1Range(string? a1Range, out int columnIndex)
+    {
+        columnIndex = 0;
+
+        if (string.IsNullOrWhiteSpace(a1Range))
+        {
+            return false;
+        }
+
+        // Examples:
+        //   Form!A5:A10
+        //   Form!$B$5:$B$5
+        var text = a1Range.Trim();
+        var excl = text.IndexOf('!');
+        if (excl >= 0)
+        {
+            text = text[(excl + 1)..];
+        }
+
+        var colon = text.IndexOf(':');
+        if (colon >= 0)
+        {
+            text = text[..colon];
+        }
+
+        // Strip '$' and keep leading letters.
+        Span<char> lettersBuf = stackalloc char[Math.Min(text.Length, 8)];
+        var n = 0;
+        foreach (var ch in text)
+        {
+            if (ch == '$')
+            {
+                continue;
+            }
+
+            if (ch is >= 'A' and <= 'Z')
+            {
+                if (n < lettersBuf.Length)
+                {
+                    lettersBuf[n++] = ch;
+                    continue;
+                }
+
+                // Too many letters for our buffer; fall back to string parsing.
+                var s = new string(text.Where(c => c is >= 'A' and <= 'Z').ToArray());
+                return TryConvertColumnLettersToIndex(s, out columnIndex);
+            }
+
+            if (ch is >= 'a' and <= 'z')
+            {
+                var upper = char.ToUpperInvariant(ch);
+                if (n < lettersBuf.Length)
+                {
+                    lettersBuf[n++] = upper;
+                    continue;
+                }
+
+                var s = new string(text.Where(c => char.IsLetter(c)).Select(char.ToUpperInvariant).ToArray());
+                return TryConvertColumnLettersToIndex(s, out columnIndex);
+            }
+
+            // Stop at first non-letter once letters started.
+            if (n > 0)
+            {
+                break;
+            }
+        }
+
+        if (n == 0)
+        {
+            return false;
+        }
+
+        return TryConvertColumnLettersToIndex(lettersBuf[..n].ToString(), out columnIndex);
+    }
+
+    private static bool TryConvertColumnLettersToIndex(string letters, out int columnIndex)
+    {
+        columnIndex = 0;
+
+        if (string.IsNullOrWhiteSpace(letters))
+        {
+            return false;
+        }
+
+        var result = 0;
+        foreach (var ch in letters.Trim())
+        {
+            if (ch is < 'A' or > 'Z')
+            {
+                return false;
+            }
+
+            checked
+            {
+                result = (result * 26) + (ch - 'A' + 1);
+            }
+        }
+
+        columnIndex = result;
+        return columnIndex > 0;
+    }
+
+    private static bool TitleLooksTechnical(ReferenceBook b)
+    {
+        var technical = (!string.IsNullOrWhiteSpace(b.SourceSheet) && !string.IsNullOrWhiteSpace(b.SourceRange))
+            ? $"{b.SourceSheet}!{b.SourceRange}"
+            : null;
+
+        if (!string.IsNullOrWhiteSpace(technical)
+            && string.Equals(b.Title, technical, StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        if (!string.IsNullOrWhiteSpace(b.Title)
+            && !string.IsNullOrWhiteSpace(b.SourceFormula)
+            && string.Equals(b.Title.Trim(), b.SourceFormula.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        // If title is empty/null, we can enhance it.
+        return string.IsNullOrWhiteSpace(b.Title);
+    }
+
+    private static ReferenceBook TryEnhanceOneFromSourceRange(XLWorkbook workbook, ReferenceBook b)
+    {
+        if (string.IsNullOrWhiteSpace(b.SourceSheet) || string.IsNullOrWhiteSpace(b.SourceRange))
+        {
+            return b;
+        }
+
+        if (!TitleLooksTechnical(b))
+        {
+            return b;
+        }
+
+        var ws = workbook.Worksheets.FirstOrDefault(w => string.Equals(w.Name, b.SourceSheet, StringComparison.OrdinalIgnoreCase));
+        if (ws is null)
+        {
+            return b;
+        }
+
+        try
+        {
+            var range = ws.Range(b.SourceRange);
+            var addr = range.RangeAddress;
+
+            string? header = null;
+
+            if (addr.FirstAddress.ColumnNumber == addr.LastAddress.ColumnNumber && addr.FirstAddress.RowNumber > 1)
+            {
+                header = ws.Cell(addr.FirstAddress.RowNumber - 1, addr.FirstAddress.ColumnNumber)
+                    .GetFormattedString()?
+                    .Trim();
+            }
+            else if (addr.FirstAddress.RowNumber == addr.LastAddress.RowNumber && addr.FirstAddress.ColumnNumber > 1)
+            {
+                header = ws.Cell(addr.FirstAddress.RowNumber, addr.FirstAddress.ColumnNumber - 1)
+                    .GetFormattedString()?
+                    .Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(header))
+            {
+                return b;
+            }
+
+            return b with { Title = header };
+        }
+        catch
+        {
+            return b;
         }
     }
 
@@ -476,14 +765,18 @@ public sealed class FormStorage
 
         var dir = GetPendingDir(formNumber, pendingId);
         var jsonPath = Path.Combine(dir, "reference-books.json");
+        var pendingOriginalPath = Path.Combine(dir, "original.xlsx");
 
         if (File.Exists(jsonPath))
         {
             try
             {
                 var json = File.ReadAllText(jsonPath);
-                return System.Text.Json.JsonSerializer.Deserialize<ReferenceBook[]>(json, JsonUtil.StableOptions)
-                       ?? Array.Empty<ReferenceBook>();
+                var books = System.Text.Json.JsonSerializer.Deserialize<ReferenceBook[]>(json, JsonUtil.StableOptions)
+                           ?? Array.Empty<ReferenceBook>();
+
+                var structure = TryLoadPending(formNumber, pendingId)?.Structure;
+                return EnhanceReferenceBookTitles(pendingOriginalPath, structure, books);
             }
             catch (Exception ex)
             {
@@ -492,16 +785,18 @@ public sealed class FormStorage
             }
         }
 
-        var originalPath = Path.Combine(dir, "original.xlsx");
-        if (!File.Exists(originalPath))
+        if (!File.Exists(pendingOriginalPath))
         {
             return Array.Empty<ReferenceBook>();
         }
 
         try
         {
-            using var fs = File.OpenRead(originalPath);
+            using var fs = File.OpenRead(pendingOriginalPath);
             var books = _parser.ExtractReferenceBooks(fs);
+
+            var structure = TryLoadPending(formNumber, pendingId)?.Structure;
+            books = EnhanceReferenceBookTitles(pendingOriginalPath, structure, books);
 
             // Best-effort cache for faster pending UI.
             TryWriteReferenceBooksJson(jsonPath, books);

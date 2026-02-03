@@ -2,6 +2,11 @@ using SamorodinkaTech.FormStructures.Web.Services;
 using Xunit;
 using System.Text;
 using SamorodinkaTech.FormStructures.Web.Models;
+using ClosedXML.Excel;
+using Microsoft.Extensions.Logging.Abstractions;
+using Microsoft.Extensions.Options;
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.FileProviders;
 
 namespace SamorodinkaTech.FormStructures.Tests;
 
@@ -58,6 +63,107 @@ public sealed class ExcelReferenceBooksTests
         Assert.Equal("M", rows[0].Values[sizePath]);
         Assert.Equal("Blue", rows[1].Values[colorPath]);
         Assert.Equal("S", rows[1].Values[sizePath]);
+    }
+
+    [Fact]
+    public void ExtractReferenceBooks_UsesHeaderCellAsTitle_WhenRangeHasHeaderAbove()
+    {
+        using var wb = new XLWorkbook();
+
+        var form = wb.AddWorksheet("Form");
+        form.Cell(1, 1).Value = "REFBOOK-003";
+        form.Cell(2, 1).Value = "Form with reference book header";
+        form.Cell(3, 1).Value = "Column";
+
+        var lists = wb.AddWorksheet("Lists");
+        lists.Cell(1, 1).Value = "Colors";
+        lists.Cell(2, 1).Value = "Red";
+        lists.Cell(3, 1).Value = "Green";
+        lists.Cell(4, 1).Value = "Blue";
+
+        var target = form.Cell(5, 1);
+        var dv = target.CreateDataValidation();
+        dv.AllowedValues = XLAllowedValues.List;
+        dv.InCellDropdown = true;
+        dv.List("=Lists!$A$2:$A$4");
+
+        using var ms = new MemoryStream();
+        wb.SaveAs(ms);
+        ms.Position = 0;
+
+        var parser = new ExcelFormParser();
+        var books = parser.ExtractReferenceBooks(ms);
+
+        Assert.Single(books);
+        var book = books[0];
+
+        Assert.Equal("Colors", book.Title);
+        Assert.Equal("Lists", book.SourceSheet);
+        Assert.Equal("$A$2:$A$4", book.SourceRange);
+        Assert.Equal(new[] { "Red", "Green", "Blue" }, book.Values);
+    }
+
+    [Fact]
+    public void FormStorage_EnhancesReferenceBookTitles_FromAppliedToColumnHeaders()
+    {
+        using var stream = LoadXlsxFromBase64Fixture("REFBOOK-002.xlsx");
+
+        var parser = new ExcelFormParser();
+        var structure = parser.Parse(stream, "REFBOOK-002.xlsx");
+
+        stream.Position = 0;
+        var books = parser.ExtractReferenceBooks(stream);
+
+        // Store the same files FormStorage expects.
+        var tempRoot = Path.Combine(Path.GetTempPath(), "FormStructuresTests", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tempRoot);
+
+        try
+        {
+            var storageRoot = Path.Combine(tempRoot, "storage");
+            var versionDir = Path.Combine(storageRoot, "forms", structure.FormNumber, "v1");
+            Directory.CreateDirectory(versionDir);
+
+            structure = structure with { Version = 1 };
+
+            File.WriteAllText(
+                Path.Combine(versionDir, "structure.json"),
+                System.Text.Json.JsonSerializer.Serialize(structure, JsonUtil.StableOptions));
+
+            File.WriteAllText(
+                Path.Combine(versionDir, "reference-books.json"),
+                System.Text.Json.JsonSerializer.Serialize(books, JsonUtil.StableOptions));
+
+            stream.Position = 0;
+            File.WriteAllBytes(Path.Combine(versionDir, "original.xlsx"), stream.ToArray());
+
+            var env = new TestHostEnvironment { ContentRootPath = tempRoot };
+            var storage = new FormStorage(
+                Options.Create(new StorageOptions { StorageRoot = "storage" }),
+                env,
+                parser,
+                NullLogger<FormStorage>.Instance);
+
+            var loaded = storage.TryLoadReferenceBooks(structure.FormNumber, version: 1);
+
+            // Titles should come from the form's column headers (Color / Size), not technical sheet/range strings.
+            Assert.Contains(loaded, b => string.Equals(b.Title, "Color", StringComparison.OrdinalIgnoreCase));
+            Assert.Contains(loaded, b => string.Equals(b.Title, "Size", StringComparison.OrdinalIgnoreCase));
+        }
+        finally
+        {
+            try { Directory.Delete(tempRoot, recursive: true); } catch { /* best-effort */ }
+        }
+    }
+
+    private sealed class TestHostEnvironment : IWebHostEnvironment
+    {
+        public string EnvironmentName { get; set; } = "Development";
+        public string ApplicationName { get; set; } = "Tests";
+        public string WebRootPath { get; set; } = string.Empty;
+        public IFileProvider WebRootFileProvider { get; set; } = new NullFileProvider();
+        public string ContentRootPath { get; set; } = string.Empty;
+        public IFileProvider ContentRootFileProvider { get; set; } = new NullFileProvider();
     }
 
     private static MemoryStream LoadXlsxFromBase64Fixture(string xlsxFileName)

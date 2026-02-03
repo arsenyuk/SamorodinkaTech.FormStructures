@@ -244,6 +244,7 @@ public sealed class ExcelFormParser
                     }
 
                     var sourceKey = $"{sourceSheet}!{sourceRange}";
+                    var title = TryGetRangeHeaderTitle(workbook, sourceSheet, sourceRange) ?? sourceKey;
                     if (!bySource.TryGetValue(sourceKey, out var book))
                     {
                         book = new MutableReferenceBook
@@ -251,7 +252,7 @@ public sealed class ExcelFormParser
                             SourceFormula = formula,
                             SourceSheet = sourceSheet,
                             SourceRange = sourceRange,
-                            Title = sourceKey,
+                            Title = title,
                             Values = values,
                         };
                         bySource[sourceKey] = book;
@@ -482,6 +483,48 @@ public sealed class ExcelFormParser
         }
 
         return list;
+    }
+
+    private static string? TryGetRangeHeaderTitle(XLWorkbook workbook, string sourceSheet, string sourceRange)
+    {
+        if (string.IsNullOrWhiteSpace(sourceSheet) || string.IsNullOrWhiteSpace(sourceRange))
+        {
+            return null;
+        }
+
+        var ws = workbook.Worksheets.FirstOrDefault(w => string.Equals(w.Name, sourceSheet, StringComparison.OrdinalIgnoreCase));
+        if (ws is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            var range = ws.Range(sourceRange);
+            var addr = range.RangeAddress;
+
+            // Most validation lists are 1-dimensional.
+            // Prefer the adjacent "header" cell of that list (above for vertical, left for horizontal).
+            if (addr.FirstAddress.ColumnNumber == addr.LastAddress.ColumnNumber && addr.FirstAddress.RowNumber > 1)
+            {
+                var headerCell = ws.Cell(addr.FirstAddress.RowNumber - 1, addr.FirstAddress.ColumnNumber);
+                var header = headerCell.GetFormattedString()?.Trim();
+                return string.IsNullOrWhiteSpace(header) ? null : header;
+            }
+
+            if (addr.FirstAddress.RowNumber == addr.LastAddress.RowNumber && addr.FirstAddress.ColumnNumber > 1)
+            {
+                var headerCell = ws.Cell(addr.FirstAddress.RowNumber, addr.FirstAddress.ColumnNumber - 1);
+                var header = headerCell.GetFormattedString()?.Trim();
+                return string.IsNullOrWhiteSpace(header) ? null : header;
+            }
+
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string NormalizeFormNumber(string raw)
