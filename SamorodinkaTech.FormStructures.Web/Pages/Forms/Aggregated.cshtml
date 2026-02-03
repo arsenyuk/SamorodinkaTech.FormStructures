@@ -88,12 +88,6 @@ else
         </div>
     </div>
 
-    if (Model.TotalRowCount == 0)
-    {
-        <div class="alert alert-warning">No data uploaded for this schema version yet.</div>
-        return;
-    }
-
     <div class="position-relative">
         <div class="collapse position-absolute end-0 top-0 mt-2 me-2 shadow" id="columnSettingsPanel" style="z-index: 2000; width: min(900px, 90vw);">
             <form method="get" class="border rounded p-3 bg-light" style="max-height: 70vh; overflow: auto;">
@@ -233,7 +227,15 @@ else
                 Model.VisibleColumns)
             </thead>
             <tbody>
-            @if (Model.Rows.Count == 0)
+            @if (Model.TotalRowCount == 0)
+            {
+                <tr>
+                    <td colspan="@tableColCount">
+                        <div class="alert alert-warning mb-0">No data uploaded for this schema version yet.</div>
+                    </td>
+                </tr>
+            }
+            else if (Model.Rows.Count == 0)
             {
                 <tr>
                     <td colspan="@tableColCount">
