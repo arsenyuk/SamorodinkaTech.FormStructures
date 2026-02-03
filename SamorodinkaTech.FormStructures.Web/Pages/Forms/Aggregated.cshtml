@@ -321,8 +321,18 @@ else
 
             function wireRow(index) {
                 const colSelect = document.getElementById(`rbCol_${index}`);
+                const valInput = document.getElementById(`rbValue_${index}`);
                 if (colSelect) {
-                    colSelect.addEventListener('change', () => fillDatalist(index));
+                    colSelect.addEventListener('change', () => {
+                        if (valInput) {
+                            valInput.value = '';
+                        }
+                        fillDatalist(index);
+                        if (valInput) {
+                            // Some browsers don't refresh datalist UI until input event.
+                            valInput.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    });
                 }
 
                 const removeBtn = document.querySelector(`[data-rb-remove="${index}"]`);
