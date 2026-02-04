@@ -46,6 +46,10 @@ public class FormsModel : PageModel
             {
                 TempData["UploadMessage"] = $"No schema changes for {result.FormTitle} (#{result.FormNumber}); current version is v{result.Version}.";
             }
+            else if (result.RequiresTypeSetup && result.PendingId is string typePendingIdForMsg)
+            {
+                TempData["UploadMessage"] = $"Upload staged for {result.FormTitle} (#{result.FormNumber}) v{result.Version}. Please confirm column types to create the form.";
+            }
             else if (result.RequiresColumnMapping && result.PendingId is string pendingId)
             {
                 TempData["UploadMessage"] = $"Upload staged for {result.FormTitle} (#{result.FormNumber}) v{result.Version}. Please confirm column mapping to create the new version.";

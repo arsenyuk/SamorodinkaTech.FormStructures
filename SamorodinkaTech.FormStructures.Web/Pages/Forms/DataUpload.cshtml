@@ -68,7 +68,10 @@
 }
 else
 {
-    @if (Model.FilterColumns.Count > 0)
+    var data = Model.Data;
+    var structure = Model.Structure;
+
+    if (Model.FilterColumns.Count > 0)
     {
         <div class="collapse @(rbHasFilter ? "show" : "")" id="rbFilterPanel">
             <div class="card mb-3">
@@ -137,13 +140,13 @@ else
     <div class="table-responsive">
         <table class="table table-sm table-striped table-bordered align-middle">
             <thead>
-            @RenderHeader(Model.Structure, Model.SortKey, Model.SortDir, Model.ReferenceBookQuery)
+            @RenderHeader(structure, Model.SortKey, Model.SortDir, Model.ReferenceBookQuery)
             </thead>
             <tbody>
-            @foreach (var row in Model.Data.Rows)
+            @foreach (var row in data.Rows)
             {
                 <tr>
-                    @foreach (var col in Model.Structure.Columns)
+                    @foreach (var col in structure.Columns)
                     {
                         row.Values.TryGetValue(col.Path, out var v);
                         <td>@v</td>
@@ -195,6 +198,7 @@ else
                         }
                         fillDatalist(index);
                         if (valInput) {
+                            // Some browsers don't refresh datalist UI until input event.
                             valInput.dispatchEvent(new Event('input', { bubbles: true }));
                         }
                     });
@@ -209,7 +213,6 @@ else
 
                         const rowCount = container.querySelectorAll('.rb-filter-row').length;
                         if (rowCount <= 1) {
-                            // Keep at least one row: just clear.
                             const val = document.getElementById(`rbValue_${index}`);
                             const match = document.getElementById(`rbMatch_${index}`);
                             if (colSelect) colSelect.value = '';
@@ -230,7 +233,6 @@ else
 
                 const index = getNextIndex();
 
-                // Clone options from the first select to keep server-rendered labels.
                 const firstSelect = document.querySelector('select[id^="rbCol_"]');
                 const optionsHtml = firstSelect ? firstSelect.innerHTML : '<option value="">(no filter)</option>';
 
@@ -261,7 +263,6 @@ else
 
                 container.appendChild(row);
 
-                // Ensure it's blank.
                 const newSelect = document.getElementById(`rbCol_${index}`);
                 if (newSelect) newSelect.value = '';
                 const newMatch = document.getElementById(`rbMatch_${index}`);
@@ -271,7 +272,6 @@ else
                 fillDatalist(index);
             }
 
-            // Wire existing rows.
             Array.from(document.querySelectorAll('.rb-filter-row[data-rb-index]')).forEach(r => {
                 const index = parseInt(r.getAttribute('data-rb-index') || '0', 10);
                 wireRow(index);

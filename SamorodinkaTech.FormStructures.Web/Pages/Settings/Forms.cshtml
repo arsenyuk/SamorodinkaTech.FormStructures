@@ -13,9 +13,16 @@
 
 <hr />
 
-@if (TempData["UploadMessage"] is string msg)
+@{
+    var uploadMsg = TempData["UploadMessage"] as string;
+}
+
+@if (!string.IsNullOrWhiteSpace(uploadMsg))
 {
-    <div class="alert alert-success">@msg</div>
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @uploadMsg
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
 }
 
 <div class="card">

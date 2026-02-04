@@ -76,6 +76,12 @@ public sealed class ExcelFormParser
             var columns = BuildColumns(headerResult.Nodes);
             var leafColumns = BuildLeafColumns(headerResult.Nodes);
 
+            // Persist the original Excel leaf-column positions so we can later interpret A1 formulas
+            // (e.g. to render charts based on summation formulas).
+            columns = columns
+                .Select((c, i) => i < leafColumns.Count ? c with { ExcelLeafColumn = leafColumns[i] } : c)
+                .ToArray();
+
             // Infer column types from Excel Data Validation (List).
             // If any leaf column has a list validation applied to it, treat it as a reference book column.
             var refBookLeafCols = DetectReferenceBookLeafColumns(ws, leafColumns);
@@ -99,6 +105,12 @@ public sealed class ExcelFormParser
                     .Select((c, i) => i < columnNumbers.Length ? c with { ColumnNumber = columnNumbers[i] } : c)
                     .ToArray();
             }
+
+            // Infer column types ONLY when Excel explicitly provides type hints:
+            // - non-list data validations (whole number/decimal/date)
+            // - explicit number formats applied to the first data row cells (even if empty)
+            var dataStartRow = lastHeaderRow + 1;
+            columns = ApplyExplicitTypeHints(ws, leafColumns, columns, dataStartRow);
 
             if (columns.Count != leafColumns.Count)
             {
@@ -126,7 +138,6 @@ public sealed class ExcelFormParser
                 SourceFileName = sourceFileName
             };
 
-            var dataStartRow = lastHeaderRow + 1;
             return new ExcelFormLayout(
                 Structure: structure,
                 HeaderRowStart: headerRowStart,
@@ -187,7 +198,10 @@ public sealed class ExcelFormParser
                         continue;
                     }
 
+                    // For data uploads we store only the displayed/cached value.
+                    // Formulas are validated separately and shown in the schema view.
                     var raw = cell.GetFormattedString()?.Trim();
+
                     values[key] = string.IsNullOrWhiteSpace(raw) ? null : raw;
                 }
 
@@ -376,6 +390,192 @@ public sealed class ExcelFormParser
         return result;
     }
 
+    private static IReadOnlyList<ColumnDefinition> ApplyExplicitTypeHints(
+        IXLWorksheet ws,
+        IReadOnlyList<int> leafColumns,
+        IReadOnlyList<ColumnDefinition> columns,
+        int dataStartRow)
+    {
+        if (leafColumns.Count == 0 || columns.Count == 0)
+        {
+            return columns;
+        }
+
+        var leafSet = new HashSet<int>(leafColumns);
+        var typeByLeafCol = new Dictionary<int, ColumnType>();
+
+        // 1) Typed data validations (explicit constraints).
+        foreach (var dv in ws.DataValidations)
+        {
+            var t = dv.AllowedValues switch
+            {
+                XLAllowedValues.WholeNumber => ColumnType.Int,
+                XLAllowedValues.Decimal => ColumnType.Decimal,
+                XLAllowedValues.Date => ColumnType.Date,
+                _ => (ColumnType?)null
+            };
+
+            if (t is null)
+            {
+                continue;
+            }
+
+            foreach (var r in dv.Ranges)
+            {
+                var addr = r.RangeAddress;
+                for (var c = addr.FirstAddress.ColumnNumber; c <= addr.LastAddress.ColumnNumber; c++)
+                {
+                    if (!leafSet.Contains(c))
+                    {
+                        continue;
+                    }
+
+                    if (!typeByLeafCol.TryGetValue(c, out var existing))
+                    {
+                        typeByLeafCol[c] = t.Value;
+                    }
+                    else if (existing != t.Value)
+                    {
+                        // Conflicting validations -> don't infer.
+                        typeByLeafCol.Remove(c);
+                    }
+                }
+            }
+        }
+
+        // 2) Explicit number formats on the first data row (even if it is empty).
+        if (dataStartRow > 0)
+        {
+            foreach (var leafCol in leafColumns)
+            {
+                if (typeByLeafCol.ContainsKey(leafCol))
+                {
+                    continue;
+                }
+
+                var cell = ws.Cell(dataStartRow, leafCol);
+                var inferred = TryInferTypeFromNumberFormat(cell.Style.NumberFormat);
+                if (inferred is not null)
+                {
+                    typeByLeafCol[leafCol] = inferred.Value;
+                }
+            }
+        }
+
+        if (typeByLeafCol.Count == 0)
+        {
+            return columns;
+        }
+
+        // Apply inferred types to column definitions by leaf-column position.
+        // Never override a non-default type like ReferenceBook.
+        var updated = columns
+            .Select((c, i) =>
+            {
+                if (i >= leafColumns.Count)
+                {
+                    return c;
+                }
+
+                if (c.Type != ColumnType.String)
+                {
+                    return c;
+                }
+
+                var leafCol = leafColumns[i];
+                return typeByLeafCol.TryGetValue(leafCol, out var t) ? c with { Type = t } : c;
+            })
+            .ToArray();
+
+        return updated;
+    }
+
+    private static ColumnType? TryInferTypeFromNumberFormat(IXLNumberFormat fmt)
+    {
+        try
+        {
+            var id = fmt.NumberFormatId;
+            var format = (fmt.Format ?? string.Empty).Trim();
+
+            // General (or missing) => no explicit type.
+            if (id == 0 && string.IsNullOrWhiteSpace(format))
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(format)
+                && string.Equals(format, "General", StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            // Built-in date/time formats.
+            if (id is 14 or 15 or 16 or 17)
+            {
+                return ColumnType.Date;
+            }
+
+            if (id is 18 or 19 or 20 or 21 or 22)
+            {
+                // 22 contains date+time; 18-21 are time variants.
+                return id == 22 ? ColumnType.DateTime : ColumnType.DateTime;
+            }
+
+            // Explicit text format.
+            if (string.Equals(format, "@", StringComparison.Ordinal))
+            {
+                return ColumnType.String;
+            }
+
+            if (string.IsNullOrWhiteSpace(format))
+            {
+                return null;
+            }
+
+            var lowered = format.ToLowerInvariant();
+
+            // Strip literal sections in quotes to avoid false positives.
+            lowered = Regex.Replace(lowered, "\"[^\"]*\"", string.Empty);
+
+            var hasDateToken = lowered.Contains('y') || lowered.Contains('d');
+            var hasTimeToken = lowered.Contains('h') || lowered.Contains('s');
+
+            if (hasDateToken || hasTimeToken)
+            {
+                return hasTimeToken ? ColumnType.DateTime : ColumnType.Date;
+            }
+
+            // Numeric formats: infer int vs decimal.
+            // If the format contains a decimal separator with digit placeholders, treat as Decimal.
+            var hasDigitPlaceholders = lowered.Contains('0') || lowered.Contains('#');
+            if (!hasDigitPlaceholders)
+            {
+                return null;
+            }
+
+            // Heuristic: decimal part exists if '.' or ',' appears after a 0/# in any section.
+            // This is locale-sensitive but good enough for explicit formats like 0.00 or #,##0.00.
+            var dot = lowered.IndexOf('.');
+            var comma = lowered.IndexOf(',');
+            var sep = dot >= 0 ? dot : comma;
+
+            if (sep >= 0)
+            {
+                var after = lowered[(sep + 1)..];
+                if (after.Contains('0') || after.Contains('#'))
+                {
+                    return ColumnType.Decimal;
+                }
+            }
+
+            return ColumnType.Int;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
     private static bool TryResolveListSource(
         XLWorkbook workbook,
         IXLWorksheet currentSheet,
@@ -471,6 +671,10 @@ public sealed class ExcelFormParser
             }
 
             var raw = cell.GetFormattedString()?.Trim();
+            if (string.IsNullOrWhiteSpace(raw) && cell.HasFormula)
+            {
+                raw = TryGetFormulaText(cell);
+            }
             if (string.IsNullOrWhiteSpace(raw))
             {
                 continue;
@@ -483,6 +687,30 @@ public sealed class ExcelFormParser
         }
 
         return list;
+    }
+
+    private static string? TryGetFormulaText(IXLCell cell)
+    {
+        try
+        {
+            // ClosedXML stores formulas without the leading '='.
+            var f = (cell.FormulaA1 ?? string.Empty).Trim();
+            if (string.IsNullOrWhiteSpace(f))
+            {
+                f = (cell.FormulaR1C1 ?? string.Empty).Trim();
+            }
+
+            if (string.IsNullOrWhiteSpace(f))
+            {
+                return null;
+            }
+
+            return f.StartsWith("=", StringComparison.Ordinal) ? f : $"={f}";
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     private static string? TryGetRangeHeaderTitle(XLWorkbook workbook, string sourceSheet, string sourceRange)

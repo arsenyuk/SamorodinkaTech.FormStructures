@@ -26,6 +26,9 @@ public class DetailsModel : PageModel
     public IReadOnlyList<int> Versions { get; private set; } = Array.Empty<int>();
     public IReadOnlyList<FormDataUpload> LatestUploads { get; private set; } = Array.Empty<FormDataUpload>();
 
+    public IReadOnlyDictionary<string, ColumnFormulaInfo> LoadedFormulasByPath { get; private set; }
+        = new Dictionary<string, ColumnFormulaInfo>(StringComparer.Ordinal);
+
     public IReadOnlyList<VersionSummary> VersionSummaries { get; private set; } = Array.Empty<VersionSummary>();
 
     public string DisplayFormNumber => Meta?.DisplayFormNumber ?? FormNumber;
@@ -218,6 +221,10 @@ public class DetailsModel : PageModel
             {
                 TempData["UploadMessage"] = $"No schema changes for {result.FormTitle} (#{result.FormNumber}); current version is v{result.Version}.";
             }
+            else if (result.RequiresTypeSetup && result.PendingId is string typePendingIdForMsg)
+            {
+                TempData["UploadMessage"] = $"Upload staged for {result.FormTitle} (#{result.FormNumber}) v{result.Version}. Please confirm column types to create the version.";
+            }
             else if (result.RequiresColumnMapping && result.PendingId is string pendingId)
             {
                 TempData["UploadMessage"] = $"Upload staged for {result.FormTitle} (#{result.FormNumber}) v{result.Version}. Please confirm column mapping to create the new version.";
@@ -279,10 +286,131 @@ public class DetailsModel : PageModel
         if (Latest is not null)
         {
             LatestUploads = _dataStorage.ListUploads(FormNumber, Latest.Version);
+            LoadedFormulasByPath = BuildSchemaFormulasByPath(FormNumber, Latest.Version, Latest);
         }
 
         VersionSummaries = BuildVersionSummaries(FormNumber, Versions);
     }
+
+    private IReadOnlyDictionary<string, ColumnFormulaInfo> BuildSchemaFormulasByPath(
+        string formNumber,
+        int version,
+        FormStructure structure)
+    {
+        // Best-effort: extract formulas from the CURRENT SCHEMA TEMPLATE (original.xlsx)
+        // so the column description reflects only what the schema defines.
+        const int maxRowsToScan = 50;
+
+        if (string.IsNullOrWhiteSpace(formNumber) || version <= 0 || structure.Columns.Count == 0)
+        {
+            return new Dictionary<string, ColumnFormulaInfo>(StringComparer.Ordinal);
+        }
+
+        var formulasByPath = new Dictionary<string, string>(StringComparer.Ordinal);
+
+        try
+        {
+            var templatePath = _storage.GetOriginalFilePath(formNumber, version);
+            if (!System.IO.File.Exists(templatePath))
+            {
+                return new Dictionary<string, ColumnFormulaInfo>(StringComparer.Ordinal);
+            }
+
+            using var fs = System.IO.File.OpenRead(templatePath);
+            var layout = _parser.ParseLayout(fs, sourceFileName: Path.GetFileName(templatePath));
+
+            // Need a fresh stream for reading cells.
+            fs.Position = 0;
+            using var workbook = new ClosedXML.Excel.XLWorkbook(fs);
+            var ws = workbook.Worksheets.FirstOrDefault();
+            if (ws is null)
+            {
+                return new Dictionary<string, ColumnFormulaInfo>(StringComparer.Ordinal);
+            }
+
+            var leafIndexByColumnNumber = new Dictionary<int, int>();
+            for (var i = 0; i < layout.LeafColumns.Count; i++)
+            {
+                leafIndexByColumnNumber[layout.LeafColumns[i]] = i;
+            }
+
+            int TryAddFormula(int columnIndex, int rowNumber)
+            {
+                var cell = ws.Cell(rowNumber, columnIndex);
+                if (!cell.HasFormula)
+                {
+                    return 0;
+                }
+
+                string? f = null;
+                try
+                {
+                    f = (cell.FormulaA1 ?? string.Empty).Trim();
+                    if (string.IsNullOrWhiteSpace(f))
+                    {
+                        f = (cell.FormulaR1C1 ?? string.Empty).Trim();
+                    }
+                }
+                catch
+                {
+                    // ignore
+                }
+
+                if (string.IsNullOrWhiteSpace(f))
+                {
+                    return 0;
+                }
+
+                if (!f.StartsWith("=", StringComparison.Ordinal))
+                {
+                    f = $"={f}";
+                }
+
+                if (!leafIndexByColumnNumber.TryGetValue(columnIndex, out var leafIdx))
+                {
+                    return 0;
+                }
+
+                if (leafIdx < 0 || leafIdx >= structure.Columns.Count)
+                {
+                    return 0;
+                }
+
+                var path = structure.Columns[leafIdx].Path;
+                if (formulasByPath.ContainsKey(path))
+                {
+                    return 0;
+                }
+
+                formulasByPath[path] = f;
+                return 1;
+            }
+
+            var lastRowToScan = Math.Min(layout.UsedLastRow, layout.DataStartRow + maxRowsToScan - 1);
+            for (var r = layout.DataStartRow; r <= lastRowToScan; r++)
+            {
+                foreach (var leafCol in layout.LeafColumns)
+                {
+                    TryAddFormula(leafCol, r);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to extract schema formulas for {FormNumber} v{Version}", formNumber, version);
+            return new Dictionary<string, ColumnFormulaInfo>(StringComparer.Ordinal);
+        }
+
+        var result = new Dictionary<string, ColumnFormulaInfo>(StringComparer.Ordinal);
+        foreach (var kv in formulasByPath)
+        {
+            result[kv.Key] = new ColumnFormulaInfo(Formula: kv.Value);
+        }
+
+        return result;
+    }
+
+    public sealed record ColumnFormulaInfo(string Formula);
 
     private IReadOnlyList<VersionSummary> BuildVersionSummaries(string formNumber, IReadOnlyList<int> versions)
     {

@@ -76,6 +76,9 @@ public class AggregatedModel : PageModel
 
     public IReadOnlyList<AggregatedRow> Rows { get; private set; } = Array.Empty<AggregatedRow>();
 
+    public IReadOnlyDictionary<string, string> SchemaFormulasByPath { get; private set; }
+        = new Dictionary<string, string>(StringComparer.Ordinal);
+
     public IActionResult OnGet(
         string formNumber,
         int? version = null,
@@ -232,6 +235,8 @@ public class AggregatedModel : PageModel
             return NotFound();
         }
 
+        SchemaFormulasByPath = TryBuildSchemaFormulasByPath(FormNumber, Version);
+
         // Column selection affects both what we display and what we offer in the filter UI.
         ApplyColumnSelection(Structure, cols);
         FilterColumns = VisibleColumns;
@@ -247,7 +252,7 @@ public class AggregatedModel : PageModel
         var rows = new List<AggregatedRow>();
         foreach (var u in uploads)
         {
-            var data = _dataStorage.TryLoadData(FormNumber, u.FormVersion, u.UploadId);
+            var data = _dataStorage.TryLoadData(FormNumber, u.FormVersion, u.UploadId, _parser);
             if (data is null)
             {
                 continue;
@@ -301,6 +306,66 @@ public class AggregatedModel : PageModel
 
         Rows = ApplySort(rows, Structure, SortKey, SortDir);
         return null;
+    }
+
+    private IReadOnlyDictionary<string, string> TryBuildSchemaFormulasByPath(string formNumber, int version)
+    {
+        try
+        {
+            var path = _formStorage.GetOriginalFilePath(formNumber, version);
+            if (!System.IO.File.Exists(path))
+            {
+                return new Dictionary<string, string>(StringComparer.Ordinal);
+            }
+
+            var bytes = System.IO.File.ReadAllBytes(path);
+
+            ExcelFormParser.ExcelFormLayout layout;
+            using (var ms = new MemoryStream(bytes, writable: false))
+            {
+                layout = _parser.ParseLayout(ms, sourceFileName: Path.GetFileName(path));
+            }
+
+            using var ms2 = new MemoryStream(bytes, writable: false);
+            using var wb = new XLWorkbook(ms2);
+            var ws = wb.Worksheets.FirstOrDefault();
+            if (ws is null)
+            {
+                return new Dictionary<string, string>(StringComparer.Ordinal);
+            }
+
+            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            for (var i = 0; i < layout.LeafColumns.Count && i < layout.Structure.Columns.Count; i++)
+            {
+                var excelCol = layout.LeafColumns[i];
+                var pathKey = layout.Structure.Columns[i].Path;
+                var cell = ws.Cell(layout.DataStartRow, excelCol);
+                if (!cell.HasFormula)
+                {
+                    continue;
+                }
+
+                var f = (cell.FormulaA1 ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(f))
+                {
+                    continue;
+                }
+
+                if (!f.StartsWith("=", StringComparison.Ordinal))
+                {
+                    f = $"={f}";
+                }
+
+                map[pathKey] = f;
+            }
+
+            return map;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to build schema formulas for {FormNumber} v{Version}", formNumber, version);
+            return new Dictionary<string, string>(StringComparer.Ordinal);
+        }
     }
 
     private static bool TryResolveColumnPath(

@@ -26,9 +26,37 @@
 
 <hr />
 
-@if (TempData["MetaMessage"] is string metaMsg)
+@{
+    var metaMsg = TempData["MetaMessage"] as string;
+    var uploadMsg = TempData["UploadMessage"] as string;
+    var deleteMsg = TempData["DeleteMessage"] as string;
+
+    var allMsgs = new List<string>();
+    if (!string.IsNullOrWhiteSpace(uploadMsg)) allMsgs.Add(uploadMsg!);
+    if (!string.IsNullOrWhiteSpace(metaMsg)) allMsgs.Add(metaMsg!);
+    if (!string.IsNullOrWhiteSpace(deleteMsg)) allMsgs.Add(deleteMsg!);
+
+    var primaryMsg = allMsgs.Count > 0 ? allMsgs[0] : null;
+}
+
+@if (!string.IsNullOrWhiteSpace(primaryMsg))
 {
-    <div class="alert alert-success">@metaMsg</div>
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @primaryMsg
+        @if (allMsgs.Count > 1)
+        {
+            <details class="mt-2">
+                <summary class="text-muted"><small>Also: @((allMsgs.Count - 1)) more</small></summary>
+                <ul class="mb-0">
+                    @for (var i = 1; i < allMsgs.Count; i++)
+                    {
+                        <li><small>@allMsgs[i]</small></li>
+                    }
+                </ul>
+            </details>
+        }
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
 }
 
 @if (Model.EditMeta)
@@ -61,15 +89,7 @@
     </div>
 }
 
-@if (TempData["UploadMessage"] is string msg)
-{
-    <div class="alert alert-success">@msg</div>
-}
 
-@if (TempData["DeleteMessage"] is string deleteMsg)
-{
-    <div class="alert alert-success">@deleteMsg</div>
-}
 
 <div class="row g-3">
     <div class="col-12">
@@ -268,7 +288,17 @@
                                             <tr>
                                                 <td class="text-end"><code>@c.Index</code></td>
                                                 <td class="text-end">@if (!string.IsNullOrWhiteSpace(c.ColumnNumber)) { <code>@c.ColumnNumber</code> }</td>
-                                                <td>@c.Name</td>
+                                                <td>
+                                                    <div>@c.Name</div>
+                                                    @if (Model.LoadedFormulasByPath.TryGetValue(c.Path, out var formulaInfo)
+                                                         && !string.IsNullOrWhiteSpace(formulaInfo.Formula))
+                                                    {
+                                                        <div class="text-muted"><small>
+                                                            Schema formula:
+                                                            <code class="ms-1 d-inline-block text-truncate" style="max-width: 28rem; vertical-align: bottom;" title="@formulaInfo.Formula">@formulaInfo.Formula</code>
+                                                        </small></div>
+                                                    }
+                                                </td>
                                                 <td class="text-muted"><small>@groupPath</small></td>
                                             </tr>
                                         }

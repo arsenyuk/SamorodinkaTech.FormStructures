@@ -14,6 +14,9 @@ static IReadOnlyList<string> ListFixtures() => new[]
     "REFBOOK-001",
     "REFBOOK-002",
     "BOTTOM-MERGED-001",
+    "FORMULA-001",
+    "TYPES-FORMAT-001",
+    "TYPES-NOFORMAT-001",
 };
 
 static byte[] BuildFixture(string name)
@@ -23,8 +26,94 @@ static byte[] BuildFixture(string name)
         "REFBOOK-001" => BuildRefbook001(),
         "REFBOOK-002" => BuildRefbook002(),
         "BOTTOM-MERGED-001" => BuildBottomMerged001(),
+        "FORMULA-001" => BuildFormula001(),
+        "TYPES-FORMAT-001" => BuildTypesFormat001(),
+        "TYPES-NOFORMAT-001" => BuildTypesNoFormat001(),
         _ => throw new ArgumentException($"Unknown fixture: {name}")
     };
+}
+
+static byte[] BuildFormula001()
+{
+    using var wb = new XLWorkbook();
+
+    var ws = wb.AddWorksheet("Form");
+    ws.Cell(1, 1).Value = "FORMULA-001";
+    ws.Cell(2, 1).Value = "Form with formulas (c3 = c1 + c2)";
+
+    // Simple 1-row header (row 3), 3 leaf columns.
+    ws.Cell(3, 1).Value = "c1";
+    ws.Cell(3, 2).Value = "c2";
+    ws.Cell(3, 3).Value = "c3";
+
+    // Data starts at row 4.
+    ws.Cell(4, 1).Value = 10;
+    ws.Cell(4, 2).Value = 20;
+    ws.Cell(4, 3).FormulaA1 = "A4+B4";
+
+    ws.Cell(5, 1).Value = 5;
+    ws.Cell(5, 2).Value = 7;
+    ws.Cell(5, 3).FormulaA1 = "A5+B5";
+
+    ws.Cell(6, 1).Value = 100;
+    ws.Cell(6, 2).Value = 200;
+    ws.Cell(6, 3).FormulaA1 = "A6+B6";
+
+    using var ms = new MemoryStream();
+    wb.SaveAs(ms);
+    return ms.ToArray();
+}
+
+static byte[] BuildTypesFormat001()
+{
+    using var wb = new XLWorkbook();
+
+    var ws = wb.AddWorksheet("Form");
+    ws.Cell(1, 1).Value = "TYPES-FORMAT-001";
+    ws.Cell(2, 1).Value = "Form with explicit type hints via number formats";
+
+    // Simple 1-row header (row 3), 5 leaf columns.
+    ws.Cell(3, 1).Value = "String";
+    ws.Cell(3, 2).Value = "Date";
+    ws.Cell(3, 3).Value = "DateTime";
+    ws.Cell(3, 4).Value = "Int";
+    ws.Cell(3, 5).Value = "Decimal";
+
+    // Row 4 is the first data row. Leave values empty but set explicit number formats.
+    // These formats are the only source of type inference.
+    ws.Cell(4, 1).Style.NumberFormat.Format = "@";
+    ws.Cell(4, 2).Style.NumberFormat.Format = "yyyy-mm-dd";
+    ws.Cell(4, 3).Style.NumberFormat.Format = "yyyy-mm-dd hh:mm:ss";
+    ws.Cell(4, 4).Style.NumberFormat.Format = "0";
+    ws.Cell(4, 5).Style.NumberFormat.Format = "0.00";
+
+    using var ms = new MemoryStream();
+    wb.SaveAs(ms);
+    return ms.ToArray();
+}
+
+static byte[] BuildTypesNoFormat001()
+{
+    using var wb = new XLWorkbook();
+
+    var ws = wb.AddWorksheet("Form");
+    ws.Cell(1, 1).Value = "TYPES-NOFORMAT-001";
+    ws.Cell(2, 1).Value = "Form without explicit type hints";
+
+    // Simple 1-row header (row 3), 3 leaf columns.
+    ws.Cell(3, 1).Value = "A";
+    ws.Cell(3, 2).Value = "B";
+    ws.Cell(3, 3).Value = "C";
+
+    // Data starts at row 4. Put numeric/date-ish values but do not set number formats.
+    // The parser should NOT infer types from values alone.
+    ws.Cell(4, 1).Value = 10;
+    ws.Cell(4, 2).Value = 20.5;
+    ws.Cell(4, 3).Value = "2026-02-03";
+
+    using var ms = new MemoryStream();
+    wb.SaveAs(ms);
+    return ms.ToArray();
 }
 
 static byte[] BuildRefbook001()

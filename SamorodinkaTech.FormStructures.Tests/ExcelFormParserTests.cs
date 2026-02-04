@@ -51,6 +51,39 @@ public class ExcelFormParserTests
     }
 
     [Fact]
+    public void ReadDataRows_ReadsCachedFormulaResult_WhenCellHasFormula()
+    {
+        using var stream = LoadXlsxFromBase64Fixture("FORMULA-001.xlsx");
+
+        var parser = new ExcelFormParser();
+        var layout = parser.ParseLayout(stream, sourceFileName: "formula.xlsx");
+
+        stream.Position = 0;
+        var rows = parser.ReadDataRows(stream, layout);
+
+        Assert.Equal(3, rows.Count);
+        Assert.Equal(4, rows[0].RowNumber);
+        Assert.Equal(5, rows[1].RowNumber);
+        Assert.Equal(6, rows[2].RowNumber);
+
+        var c1 = layout.Structure.Columns[0].Path;
+        var c2 = layout.Structure.Columns[1].Path;
+        var c3 = layout.Structure.Columns[2].Path;
+
+        Assert.Equal("10", rows[0].Values[c1]);
+        Assert.Equal("20", rows[0].Values[c2]);
+        Assert.Equal("30", rows[0].Values[c3]);
+
+        Assert.Equal("5", rows[1].Values[c1]);
+        Assert.Equal("7", rows[1].Values[c2]);
+        Assert.Equal("12", rows[1].Values[c3]);
+
+        Assert.Equal("100", rows[2].Values[c1]);
+        Assert.Equal("200", rows[2].Values[c2]);
+        Assert.Equal("300", rows[2].Values[c3]);
+    }
+
+    [Fact]
     public void ParseLayout_DetectsColumnIndexRow_AndDoesNotTreatItAsData()
     {
         using var stream = LoadXlsxFromBase64Fixture("TEST-002.xlsx");
@@ -98,9 +131,42 @@ public class ExcelFormParserTests
         Assert.Equal(5, layout.Structure.Columns.Count);
         Assert.Equal(new[] { "String", "Date", "DateTime", "Int", "Decimal" }, layout.Structure.Columns.Select(c => c.Name).ToArray());
 
+        // Types should be inferred only from explicit Excel hints (number formats).
+        Assert.Equal(
+            new[] { ColumnType.String, ColumnType.Date, ColumnType.DateTime, ColumnType.Int, ColumnType.Decimal },
+            layout.Structure.Columns.Select(c => c.Type).ToArray());
+
         stream.Position = 0;
         var rows = parser.ReadDataRows(stream, layout);
         Assert.Empty(rows);
+    }
+
+    [Fact]
+    public void ParseLayout_InfersTypes_FromExplicitNumberFormats_EvenIfFirstDataRowIsEmpty()
+    {
+        using var stream = LoadXlsxFromBase64Fixture("TYPES-FORMAT-001.xlsx");
+
+        var parser = new ExcelFormParser();
+        var layout = parser.ParseLayout(stream, sourceFileName: "TYPES-FORMAT-001.xlsx");
+
+        Assert.Equal("Form with explicit type hints via number formats", layout.Structure.FormTitle);
+        Assert.Equal(4, layout.DataStartRow);
+
+        Assert.Equal(
+            new[] { ColumnType.String, ColumnType.Date, ColumnType.DateTime, ColumnType.Int, ColumnType.Decimal },
+            layout.Structure.Columns.Select(c => c.Type).ToArray());
+    }
+
+    [Fact]
+    public void ParseLayout_DoesNotInferTypes_FromValuesAlone_WhenNoExplicitTypeHintsPresent()
+    {
+        using var stream = LoadXlsxFromBase64Fixture("TYPES-NOFORMAT-001.xlsx");
+
+        var parser = new ExcelFormParser();
+        var layout = parser.ParseLayout(stream, sourceFileName: "TYPES-NOFORMAT-001.xlsx");
+
+        Assert.Equal("Form without explicit type hints", layout.Structure.FormTitle);
+        Assert.All(layout.Structure.Columns, c => Assert.Equal(ColumnType.String, c.Type));
     }
 
     [Fact]

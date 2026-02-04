@@ -272,7 +272,18 @@ else
                         @foreach (var col in Model.VisibleColumns)
                         {
                             r.Values.TryGetValue(col.Path, out var v);
-                            <td>@v</td>
+                            <td data-excel-col="@col.ExcelLeafColumn" data-col-name="@col.Name">
+                                @v
+                                @if (Model.SchemaFormulasByPath.TryGetValue(col.Path, out var f) && LooksLikeSummationFormula(f))
+                                {
+                                    <button type="button"
+                                            class="btn btn-outline-secondary btn-sm py-0 px-1 js-sum-pie"
+                                            data-formula="@f"
+                                            data-total-name="@col.Name">
+                                        Pie
+                                    </button>
+                                }
+                            </td>
                         }
                         <td class="text-end">
                             <div class="d-flex gap-2 justify-content-end">
@@ -287,10 +298,43 @@ else
         </table>
         </div>
     </div>
+
+    <div class="modal fade sum-pie-modal" id="sumPieModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="sumPieTitle">Pie chart</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body d-flex flex-column gap-3">
+                    <div class="sum-pie-canvas-wrap flex-grow-1">
+                        <canvas id="sumPieCanvas"></canvas>
+                    </div>
+
+                    <div class="sum-pie-legend-wrap">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Part</th>
+                                    <th class="text-end">Value</th>
+                                    <th class="text-end">%</th>
+                                    <th class="text-end">Color</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sumPieLegend"></tbody>
+                        </table>
+                        <div class="text-muted mt-2" id="sumPieHint" style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
 }
 
 @section Scripts {
     <partial name="_ValidationScriptsPartial" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
         (() => {
             const valuesByCol = @Html.Raw(Model.ReferenceBookValuesJson);
@@ -415,11 +459,226 @@ else
             }
         })();
     </script>
+
+    <script>
+        (() => {
+            const modalEl = document.getElementById('sumPieModal');
+            const titleEl = document.getElementById('sumPieTitle');
+            const canvas = document.getElementById('sumPieCanvas');
+            const legendBody = document.getElementById('sumPieLegend');
+            const hintEl = document.getElementById('sumPieHint');
+            if (!(modalEl instanceof HTMLElement)
+                || !(titleEl instanceof HTMLElement)
+                || !(canvas instanceof HTMLCanvasElement)
+                || !(legendBody instanceof HTMLElement)
+                || !(hintEl instanceof HTMLElement)) {
+                return;
+            }
+
+            const palette = [
+                '#0d6efd', '#198754', '#dc3545', '#ffc107', '#6f42c1', '#20c997',
+                '#fd7e14', '#0dcaf0', '#adb5bd', '#6610f2', '#d63384', '#6c757d'
+            ];
+
+            let chart = null;
+
+            function escapeHtml(s) {
+                return (s ?? '').replace(/[&<>"]/g, (ch) => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;'
+                }[ch] || ch));
+            }
+
+            function parseNumber(text) {
+                if (!text) return null;
+                const t = text.trim().replace(/\s/g, '');
+                if (!t) return null;
+                const normalized = t.replace(',', '.');
+                const n = Number(normalized);
+                return Number.isFinite(n) ? n : null;
+            }
+
+            function colLettersToNumber(letters) {
+                let n = 0;
+                for (let i = 0; i < letters.length; i++) {
+                    const c = letters.charCodeAt(i);
+                    if (c < 65 || c > 90) return null;
+                    n = n * 26 + (c - 64);
+                }
+                return n;
+            }
+
+            function tryParseSummationColumns(formula) {
+                if (!formula) return null;
+                const f = formula.trim();
+                if (!f.startsWith('=')) return null;
+
+                const cols = [];
+                const seen = new Set();
+                const m = f.toUpperCase().matchAll(/\b([A-Z]{1,3})\d+\b/g);
+                for (const it of m) {
+                    const letters = it[1];
+                    if (!letters || seen.has(letters)) continue;
+                    const n = colLettersToNumber(letters);
+                    if (n === null) continue;
+                    seen.add(letters);
+                    cols.push(n);
+                }
+                return cols.length >= 2 ? cols : null;
+            }
+
+            function computeDialogHeightPx(rowCount) {
+                const viewportMax = Math.floor(window.innerHeight * 0.92);
+                const min = 520; // baseline
+                const perRow = 22;
+                const desired = (min * 2) + Math.max(0, rowCount - 1) * perRow;
+                return Math.min(viewportMax, Math.max(min, desired));
+            }
+
+            function applyDialogHeight(rowCount) {
+                const h = computeDialogHeightPx(rowCount);
+                modalEl.style.setProperty('--sum-pie-dialog-height', `${h}px`);
+            }
+
+            function renderChart(title, items) {
+                titleEl.textContent = title || 'Pie chart';
+                legendBody.innerHTML = '';
+                hintEl.style.display = 'none';
+                hintEl.textContent = '';
+
+                applyDialogHeight(items.length);
+
+                if (chart) {
+                    chart.destroy();
+                    chart = null;
+                }
+
+                const total = items.reduce((s, x) => s + (x.value || 0), 0);
+                for (const it of items) {
+                    const pct = total > 0 ? (it.value / total) * 100 : 0;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${escapeHtml(it.name)}</td>
+                        <td class="text-end"><code>${it.value}</code></td>
+                        <td class="text-end"><code>${pct.toFixed(1)}</code></td>
+                        <td class="text-end"><span class="d-inline-block rounded" style="width: 14px; height: 14px; background: ${it.color}; border: 1px solid rgba(0,0,0,0.1);"></span></td>
+                    `;
+                    legendBody.appendChild(tr);
+                }
+
+                const labels = items.map(x => x.name);
+                const values = items.map(x => x.value);
+                const colors = items.map(x => x.color);
+
+                // If Chart.js isn't available, keep legend-only.
+                if (typeof Chart === 'undefined') {
+                    hintEl.textContent = 'Chart.js is not available.';
+                    hintEl.style.display = '';
+                    return;
+                }
+
+                chart = new Chart(canvas.getContext('2d'), {
+                    type: 'pie',
+                    data: {
+                        labels,
+                        datasets: [{
+                            data: values,
+                            backgroundColor: colors,
+                            borderColor: 'rgba(255,255,255,0.9)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        }
+                    }
+                });
+            }
+
+            document.addEventListener('click', (e) => {
+                const btn = e.target instanceof HTMLElement ? e.target.closest('.js-sum-pie') : null;
+                if (!(btn instanceof HTMLElement)) return;
+
+                const tr = btn.closest('tr');
+                if (!(tr instanceof HTMLElement)) return;
+
+                const formula = btn.getAttribute('data-formula') || '';
+                const totalName = btn.getAttribute('data-total-name') || 'Sum';
+
+                const cols = tryParseSummationColumns(formula);
+                if (!cols) {
+                    renderChart(totalName, []);
+                    hintEl.textContent = 'Unsupported formula format.';
+                    hintEl.style.display = '';
+                    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                    return;
+                }
+
+                const items = [];
+                for (let i = 0; i < cols.length; i++) {
+                    const c = cols[i];
+                    const cell = tr.querySelector(`td[data-excel-col="${c}"]`);
+                    if (!(cell instanceof HTMLElement)) continue;
+
+                    const name = cell.getAttribute('data-col-name') || `Col ${c}`;
+                    const value = parseNumber(cell.textContent);
+                    if (value === null) continue;
+
+                    items.push({ name, value, color: palette[i % palette.length] });
+                }
+
+                items.sort((a, b) => b.value - a.value);
+                for (let i = 0; i < items.length; i++) {
+                    items[i].color = palette[i % palette.length];
+                }
+
+                renderChart(totalName, items);
+                bootstrap.Modal.getOrCreateInstance(modalEl).show();
+            });
+
+            modalEl.addEventListener('hidden.bs.modal', () => {
+                if (chart) {
+                    chart.destroy();
+                    chart = null;
+                }
+            });
+
+            window.addEventListener('resize', () => {
+                // Reapply a safe max height on resize.
+                applyDialogHeight(legendBody.querySelectorAll('tr').length);
+                if (chart) {
+                    chart.resize();
+                }
+            });
+        })();
+    </script>
 }
 
 @functions {
     private static string ToggleDir(string currentDir) =>
         string.Equals(currentDir, "desc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc";
+
+    private static bool LooksLikeSummationFormula(string? formula)
+    {
+        if (string.IsNullOrWhiteSpace(formula))
+        {
+            return false;
+        }
+
+        var f = formula.Trim();
+        if (!f.StartsWith("=", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        return f.Contains('+', StringComparison.Ordinal)
+               || f.Contains("SUM(", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static IHtmlContent RenderHeader(
         SamorodinkaTech.FormStructures.Web.Models.FormStructure structure,

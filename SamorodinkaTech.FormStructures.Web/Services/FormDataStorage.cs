@@ -1,5 +1,6 @@
 using SamorodinkaTech.FormStructures.Web.Models;
 using System.Collections.Concurrent;
+using ClosedXML.Excel;
 
 namespace SamorodinkaTech.FormStructures.Web.Services;
 
@@ -101,6 +102,8 @@ public sealed class FormDataStorage
             rows = parser.ReadDataRows(s, layout);
         }
 
+        ValidateUniformColumnFormulas(bytes, layout);
+
         var uploadId = Guid.NewGuid().ToString("N");
         var uploadedAtUtc = DateTime.UtcNow;
 
@@ -150,6 +153,160 @@ public sealed class FormDataStorage
             uploadDir);
 
         return new SaveDataResult(upload.FormNumber, upload.FormVersion, upload.UploadId, upload.RowCount);
+    }
+
+    private static void ValidateUniformColumnFormulas(byte[] xlsxBytes, ExcelFormParser.ExcelFormLayout layout)
+    {
+        // Requirement: if a column uses formulas, the formula must be identical for all non-empty cells.
+        // We compare formulas by R1C1 form (stable for copy-down formulas).
+        using var ms = new MemoryStream(xlsxBytes, writable: false);
+        using var workbook = new XLWorkbook(ms);
+        var ws = workbook.Worksheets.FirstOrDefault();
+        if (ws is null)
+        {
+            return;
+        }
+
+        static bool IsNonEmpty(IXLCell cell) => !cell.IsEmpty(XLCellsUsedOptions.Contents);
+
+        static string? GetFormulaKeyR1C1(IXLCell cell)
+        {
+            try
+            {
+                var f = (cell.FormulaR1C1 ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(f))
+                {
+                    f = (cell.FormulaA1 ?? string.Empty).Trim();
+                }
+
+                if (string.IsNullOrWhiteSpace(f))
+                {
+                    return null;
+                }
+
+                return f.StartsWith("=", StringComparison.Ordinal) ? f : $"={f}";
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        static string? GetFormulaA1(IXLCell cell)
+        {
+            try
+            {
+                var f = (cell.FormulaA1 ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(f))
+                {
+                    return null;
+                }
+
+                return f.StartsWith("=", StringComparison.Ordinal) ? f : $"={f}";
+            }
+            catch
+            {
+                return null;
+            }
+        }
+
+        var problems = new List<string>();
+
+        for (var i = 0; i < layout.LeafColumns.Count && i < layout.Structure.Columns.Count; i++)
+        {
+            var excelCol = layout.LeafColumns[i];
+            var colDef = layout.Structure.Columns[i];
+
+            string? expectedKey = null;
+            int expectedRow = 0;
+            string? expectedA1 = null;
+
+            int? firstNonFormulaRow = null;
+            string? firstNonFormulaValue = null;
+
+            // Track up to a few distinct formulas for diagnostics.
+            var distinct = new Dictionary<string, (int Row, string? A1)>(StringComparer.Ordinal);
+
+            for (var r = layout.DataStartRow; r <= layout.UsedLastRow; r++)
+            {
+                var cell = ws.Cell(r, excelCol);
+                if (!IsNonEmpty(cell))
+                {
+                    continue;
+                }
+
+                if (cell.HasFormula)
+                {
+                    var key = GetFormulaKeyR1C1(cell);
+                    if (string.IsNullOrWhiteSpace(key))
+                    {
+                        // Treat as formula cell but without readable formula text.
+                        key = "=<unreadable formula>";
+                    }
+
+                    if (expectedKey is null)
+                    {
+                        expectedKey = key;
+                        expectedRow = r;
+                        expectedA1 = GetFormulaA1(cell);
+                        distinct[key] = (r, expectedA1);
+                        continue;
+                    }
+
+                    if (!string.Equals(expectedKey, key, StringComparison.Ordinal))
+                    {
+                        if (!distinct.ContainsKey(key) && distinct.Count < 5)
+                        {
+                            distinct[key] = (r, GetFormulaA1(cell));
+                        }
+                    }
+
+                    continue;
+                }
+
+                // Non-formula value in a column that might otherwise be formulas.
+                firstNonFormulaRow ??= r;
+                if (firstNonFormulaValue is null)
+                {
+                    var v = (cell.GetFormattedString() ?? string.Empty).Trim();
+                    firstNonFormulaValue = v.Length > 60 ? v[..60] + "…" : v;
+                }
+            }
+
+            if (expectedKey is null)
+            {
+                continue; // no formulas in this column
+            }
+
+            if (firstNonFormulaRow is not null)
+            {
+                problems.Add(
+                    $"Column #{colDef.Index} '{colDef.Name}' contains formulas (first at row {expectedRow}) and non-formula values (first at row {firstNonFormulaRow}: '{firstNonFormulaValue}').");
+            }
+
+            if (distinct.Count > 1)
+            {
+                var variants = distinct
+                    .Select(kv =>
+                    {
+                        var (row, a1) = kv.Value;
+                        var a1Text = string.IsNullOrWhiteSpace(a1) ? "" : $"; A1={a1}";
+                        return $"row {row}: R1C1={kv.Key}{a1Text}";
+                    })
+                    .ToArray();
+
+                problems.Add(
+                    $"Column #{colDef.Index} '{colDef.Name}' has inconsistent formulas. Expected (row {expectedRow}): R1C1={expectedKey}{(string.IsNullOrWhiteSpace(expectedA1) ? "" : $"; A1={expectedA1}")}. Found: {string.Join(" | ", variants)}");
+            }
+        }
+
+        if (problems.Count > 0)
+        {
+            var message = "Upload rejected: formulas must be identical within each column. " +
+                          "Fix the Excel file so the column formula is consistent for all filled cells (R1C1 form should match). " +
+                          "Details: " + string.Join(" ", problems);
+            throw new FormParseException(message);
+        }
     }
 
     public IReadOnlyList<FormDataUpload> ListUploads(string formNumber, int version)
@@ -345,6 +502,151 @@ public sealed class FormDataStorage
             _logger.LogWarning(ex, "Failed to read data.json for {FormNumber} v{Version} {UploadId}", formNumber, version, uploadId);
             return null;
         }
+    }
+
+    public FormDataFile? TryLoadData(string formNumber, int version, string uploadId, ExcelFormParser parser)
+    {
+        var data = TryLoadData(formNumber, version, uploadId);
+        if (data is null)
+        {
+            return null;
+        }
+
+        if (!ContainsFormulaLikeValues(data))
+        {
+            return data;
+        }
+
+        try
+        {
+            var normalized = TryNormalizeLegacyFormulaTextData(formNumber, version, uploadId, data, parser);
+            return normalized ?? data;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to normalize legacy data for {FormNumber} v{Version} {UploadId}", formNumber, version, uploadId);
+            return data;
+        }
+    }
+
+    private static bool ContainsFormulaLikeValues(FormDataFile data)
+    {
+        foreach (var r in data.Rows)
+        {
+            foreach (var kv in r.Values)
+            {
+                if (LooksLikeFormulaText(kv.Value))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private static bool LooksLikeFormulaText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var v = value.Trim();
+        if (!v.StartsWith("=", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        // Heuristic: a typical A1 reference or SUM(...) indicates this is a real formula string,
+        // not a user-entered value starting with '='.
+        if (v.Contains("SUM(", StringComparison.OrdinalIgnoreCase))
+        {
+            return true;
+        }
+
+        for (var i = 1; i < v.Length; i++)
+        {
+            if (char.IsLetter(v[i]))
+            {
+                // expect something like A1 / AB12
+                var j = i;
+                while (j < v.Length && char.IsLetter(v[j])) j++;
+                if (j < v.Length && char.IsDigit(v[j]))
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+
+    private FormDataFile? TryNormalizeLegacyFormulaTextData(
+        string formNumber,
+        int version,
+        string uploadId,
+        FormDataFile existing,
+        ExcelFormParser parser)
+    {
+        var originalPath = GetOriginalFilePath(formNumber, version, uploadId);
+        if (!File.Exists(originalPath))
+        {
+            return null;
+        }
+
+        byte[] bytes;
+        try
+        {
+            bytes = File.ReadAllBytes(originalPath);
+        }
+        catch
+        {
+            return null;
+        }
+
+        ExcelFormParser.ExcelFormLayout layout;
+        using (var ms = new MemoryStream(bytes, writable: false))
+        {
+            layout = parser.ParseLayout(ms, existing.Upload.OriginalFileName);
+        }
+
+        if (!string.Equals(layout.Structure.StructureHash, existing.Upload.StructureHash, StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        IReadOnlyList<FormDataRow> rows;
+        using (var ms = new MemoryStream(bytes, writable: false))
+        {
+            rows = parser.ReadDataRows(ms, layout);
+        }
+
+        var normalized = new FormDataFile
+        {
+            Upload = existing.Upload,
+            Rows = rows
+        };
+
+        var dataJsonPath = GetDataJsonPath(formNumber, version, uploadId);
+        var dataJson = JsonUtil.ToStableJson(normalized);
+
+        lock (GetFormLock(formNumber))
+        {
+            try
+            {
+                if (File.Exists(dataJsonPath))
+                {
+                    File.WriteAllText(dataJsonPath, dataJson);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Failed to write normalized data.json for {FormNumber} v{Version} {UploadId}", formNumber, version, uploadId);
+            }
+        }
+
+        return normalized;
     }
 
     public FormDataUpload? TryLoadUploadMeta(string formNumber, int version, string uploadId)
