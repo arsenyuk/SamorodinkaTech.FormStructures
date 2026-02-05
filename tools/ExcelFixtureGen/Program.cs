@@ -15,6 +15,11 @@ static IReadOnlyList<string> ListFixtures() => new[]
     "REFBOOK-002",
     "BOTTOM-MERGED-001",
     "FORMULA-001",
+    "AVG-001-AVERAGE",
+    "AVG-002-SUM-COUNT",
+    "AVG-003-SUM-DIV",
+    "AVG-004-PLUS-DIV",
+    "AVG-005-RU",
     "TYPES-FORMAT-001",
     "TYPES-NOFORMAT-001",
 };
@@ -27,11 +32,71 @@ static byte[] BuildFixture(string name)
         "REFBOOK-002" => BuildRefbook002(),
         "BOTTOM-MERGED-001" => BuildBottomMerged001(),
         "FORMULA-001" => BuildFormula001(),
+        "AVG-001-AVERAGE" => BuildAvg001Average(),
+        "AVG-002-SUM-COUNT" => BuildAvg002SumCount(),
+        "AVG-003-SUM-DIV" => BuildAvg003SumDiv(),
+        "AVG-004-PLUS-DIV" => BuildAvg004PlusDiv(),
+        "AVG-005-RU" => BuildAvg005Ru(),
         "TYPES-FORMAT-001" => BuildTypesFormat001(),
         "TYPES-NOFORMAT-001" => BuildTypesNoFormat001(),
         _ => throw new ArgumentException($"Unknown fixture: {name}")
     };
 }
+
+static byte[] BuildAvgBase(string formNumber, string title, string formulaA1)
+{
+    using var wb = new XLWorkbook();
+
+    var ws = wb.AddWorksheet("Form");
+    ws.Cell(1, 1).Value = formNumber;
+    ws.Cell(2, 1).Value = title;
+
+    // Simple 1-row header (row 3), 4 leaf columns.
+    ws.Cell(3, 1).Value = "A";
+    ws.Cell(3, 2).Value = "B";
+    ws.Cell(3, 3).Value = "C";
+    ws.Cell(3, 4).Value = "Avg";
+
+    // Data starts at row 4.
+    ws.Cell(4, 1).Value = 10;
+    ws.Cell(4, 2).Value = 20;
+    ws.Cell(4, 3).Value = 30;
+    ws.Cell(4, 4).FormulaA1 = formulaA1;
+
+    using var ms = new MemoryStream();
+    wb.SaveAs(ms);
+    return ms.ToArray();
+}
+
+static byte[] BuildAvg001Average()
+    => BuildAvgBase(
+        formNumber: "AVG-001",
+        title: "Average: AVERAGE(A4:C4)",
+        formulaA1: "AVERAGE(A4:C4)");
+
+static byte[] BuildAvg002SumCount()
+    => BuildAvgBase(
+        formNumber: "AVG-002",
+        title: "Average: SUM(A4:C4)/COUNT(A4:C4)",
+        formulaA1: "SUM(A4:C4)/COUNT(A4:C4)");
+
+static byte[] BuildAvg003SumDiv()
+    => BuildAvgBase(
+        formNumber: "AVG-003",
+        title: "Average: SUM(A4:C4)/3",
+        formulaA1: "SUM(A4:C4)/3");
+
+static byte[] BuildAvg004PlusDiv()
+    => BuildAvgBase(
+        formNumber: "AVG-004",
+        title: "Average: (A4+B4+C4)/3",
+        formulaA1: "(A4+B4+C4)/3");
+
+static byte[] BuildAvg005Ru()
+    => BuildAvgBase(
+        formNumber: "AVG-005",
+        title: "Average (RU): СРЗНАЧ(A4:C4)",
+        formulaA1: "СРЗНАЧ(A4:C4)");
 
 static byte[] BuildFormula001()
 {

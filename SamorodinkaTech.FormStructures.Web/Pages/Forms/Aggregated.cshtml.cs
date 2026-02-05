@@ -79,6 +79,11 @@ public class AggregatedModel : PageModel
     public IReadOnlyDictionary<string, string> SchemaFormulasByPath { get; private set; }
         = new Dictionary<string, string>(StringComparer.Ordinal);
 
+    public IReadOnlyDictionary<string, ChartFormulaInfo> ChartableFormulasByPath { get; private set; }
+        = new Dictionary<string, ChartFormulaInfo>(StringComparer.Ordinal);
+
+    private sealed record SchemaFormulaCell(string Formula, int OriginRow, int OriginCol);
+
     public IActionResult OnGet(
         string formNumber,
         int? version = null,
@@ -235,7 +240,9 @@ public class AggregatedModel : PageModel
             return NotFound();
         }
 
-        SchemaFormulasByPath = TryBuildSchemaFormulasByPath(FormNumber, Version);
+        var schemaFormulaCells = TryBuildSchemaFormulaCellsByPath(FormNumber, Version);
+        SchemaFormulasByPath = schemaFormulaCells.ToDictionary(kv => kv.Key, kv => kv.Value.Formula, StringComparer.Ordinal);
+        ChartableFormulasByPath = BuildChartableFormulasByPath(schemaFormulaCells);
 
         // Column selection affects both what we display and what we offer in the filter UI.
         ApplyColumnSelection(Structure, cols);
@@ -308,14 +315,29 @@ public class AggregatedModel : PageModel
         return null;
     }
 
-    private IReadOnlyDictionary<string, string> TryBuildSchemaFormulasByPath(string formNumber, int version)
+    private static IReadOnlyDictionary<string, ChartFormulaInfo> BuildChartableFormulasByPath(
+        IReadOnlyDictionary<string, SchemaFormulaCell> formulasByPath)
+    {
+        var map = new Dictionary<string, ChartFormulaInfo>(StringComparer.Ordinal);
+        foreach (var kv in formulasByPath)
+        {
+            if (ExcelChartFormulaParser.TryParse(kv.Value.Formula, kv.Value.OriginCol, kv.Value.OriginRow, out var info))
+            {
+                map[kv.Key] = info;
+            }
+        }
+
+        return map;
+    }
+
+    private IReadOnlyDictionary<string, SchemaFormulaCell> TryBuildSchemaFormulaCellsByPath(string formNumber, int version)
     {
         try
         {
             var path = _formStorage.GetOriginalFilePath(formNumber, version);
             if (!System.IO.File.Exists(path))
             {
-                return new Dictionary<string, string>(StringComparer.Ordinal);
+                return new Dictionary<string, SchemaFormulaCell>(StringComparer.Ordinal);
             }
 
             var bytes = System.IO.File.ReadAllBytes(path);
@@ -331,10 +353,10 @@ public class AggregatedModel : PageModel
             var ws = wb.Worksheets.FirstOrDefault();
             if (ws is null)
             {
-                return new Dictionary<string, string>(StringComparer.Ordinal);
+                return new Dictionary<string, SchemaFormulaCell>(StringComparer.Ordinal);
             }
 
-            var map = new Dictionary<string, string>(StringComparer.Ordinal);
+            var map = new Dictionary<string, SchemaFormulaCell>(StringComparer.Ordinal);
             for (var i = 0; i < layout.LeafColumns.Count && i < layout.Structure.Columns.Count; i++)
             {
                 var excelCol = layout.LeafColumns[i];
@@ -345,7 +367,12 @@ public class AggregatedModel : PageModel
                     continue;
                 }
 
+                // Prefer A1, but fall back to R1C1 (some templates can store formulas in R1C1 only).
                 var f = (cell.FormulaA1 ?? string.Empty).Trim();
+                if (string.IsNullOrWhiteSpace(f))
+                {
+                    f = (cell.FormulaR1C1 ?? string.Empty).Trim();
+                }
                 if (string.IsNullOrWhiteSpace(f))
                 {
                     continue;
@@ -356,7 +383,7 @@ public class AggregatedModel : PageModel
                     f = $"={f}";
                 }
 
-                map[pathKey] = f;
+                map[pathKey] = new SchemaFormulaCell(f, layout.DataStartRow, excelCol);
             }
 
             return map;
@@ -364,7 +391,7 @@ public class AggregatedModel : PageModel
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Failed to build schema formulas for {FormNumber} v{Version}", formNumber, version);
-            return new Dictionary<string, string>(StringComparer.Ordinal);
+            return new Dictionary<string, SchemaFormulaCell>(StringComparer.Ordinal);
         }
     }
 

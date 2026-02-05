@@ -274,11 +274,14 @@ else
                             r.Values.TryGetValue(col.Path, out var v);
                             <td data-excel-col="@col.ExcelLeafColumn" data-col-name="@col.Name">
                                 @v
-                                @if (Model.SchemaFormulasByPath.TryGetValue(col.Path, out var f) && LooksLikeSummationFormula(f))
+                                @if (Model.ChartableFormulasByPath.TryGetValue(col.Path, out var chartInfo))
                                 {
+                                    var kindToken = chartInfo.Kind == SamorodinkaTech.FormStructures.Web.Services.ChartAggregationKind.Average ? "avg" : "sum";
+                                    var colsToken = string.Join(",", chartInfo.Columns);
                                     <button type="button"
                                             class="btn btn-outline-secondary btn-sm py-0 px-1 js-sum-pie"
-                                            data-formula="@f"
+                                            data-kind="@kindToken"
+                                            data-cols="@colsToken"
                                             data-total-name="@col.Name">
                                         Pie
                                     </button>
@@ -500,33 +503,17 @@ else
                 return Number.isFinite(n) ? n : null;
             }
 
-            function colLettersToNumber(letters) {
-                let n = 0;
-                for (let i = 0; i < letters.length; i++) {
-                    const c = letters.charCodeAt(i);
-                    if (c < 65 || c > 90) return null;
-                    n = n * 26 + (c - 64);
-                }
-                return n;
+            function tryParseColsToken(token) {
+                if (!token) return null;
+                const parts = token.split(',').map(x => parseInt(x.trim(), 10)).filter(x => Number.isFinite(x) && x > 0);
+                const uniq = Array.from(new Set(parts));
+                return uniq.length >= 2 ? uniq : null;
             }
 
-            function tryParseSummationColumns(formula) {
-                if (!formula) return null;
-                const f = formula.trim();
-                if (!f.startsWith('=')) return null;
-
-                const cols = [];
-                const seen = new Set();
-                const m = f.toUpperCase().matchAll(/\b([A-Z]{1,3})\d+\b/g);
-                for (const it of m) {
-                    const letters = it[1];
-                    if (!letters || seen.has(letters)) continue;
-                    const n = colLettersToNumber(letters);
-                    if (n === null) continue;
-                    seen.add(letters);
-                    cols.push(n);
-                }
-                return cols.length >= 2 ? cols : null;
+            function getTdTextWithoutButtons(td) {
+                const clone = td.cloneNode(true);
+                clone.querySelectorAll('button').forEach(b => b.remove());
+                return clone.textContent || '';
             }
 
             function computeDialogHeightPx(rowCount) {
@@ -542,11 +529,23 @@ else
                 modalEl.style.setProperty('--sum-pie-dialog-height', `${h}px`);
             }
 
-            function renderChart(title, items) {
-                titleEl.textContent = title || 'Pie chart';
+            function renderChart(title, items, hint) {
+                const t = (title || '').trim();
+                if (t.length === 0) {
+                    titleEl.textContent = '';
+                    titleEl.style.display = 'none';
+                } else {
+                    titleEl.textContent = t;
+                    titleEl.style.display = '';
+                }
                 legendBody.innerHTML = '';
-                hintEl.style.display = 'none';
-                hintEl.textContent = '';
+                if (hint) {
+                    hintEl.textContent = hint;
+                    hintEl.style.display = '';
+                } else {
+                    hintEl.style.display = 'none';
+                    hintEl.textContent = '';
+                }
 
                 applyDialogHeight(items.length);
 
@@ -607,14 +606,12 @@ else
                 const tr = btn.closest('tr');
                 if (!(tr instanceof HTMLElement)) return;
 
-                const formula = btn.getAttribute('data-formula') || '';
                 const totalName = btn.getAttribute('data-total-name') || 'Sum';
 
-                const cols = tryParseSummationColumns(formula);
+                const kind = (btn.getAttribute('data-kind') || 'sum').toLowerCase();
+                const cols = tryParseColsToken(btn.getAttribute('data-cols') || '');
                 if (!cols) {
-                    renderChart(totalName, []);
-                    hintEl.textContent = 'Unsupported formula format.';
-                    hintEl.style.display = '';
+                    renderChart(totalName, [], 'Unsupported formula format.');
                     bootstrap.Modal.getOrCreateInstance(modalEl).show();
                     return;
                 }
@@ -637,7 +634,21 @@ else
                     items[i].color = palette[i % palette.length];
                 }
 
-                renderChart(totalName, items);
+                let title = totalName;
+                let hint = '';
+                if (kind === 'avg') {
+                    title = '';
+                    const totalTd = btn.closest('td');
+                    const shownTotal = totalTd instanceof HTMLElement ? parseNumber(getTdTextWithoutButtons(totalTd)) : null;
+                    const sum = items.reduce((s, x) => s + (x.value || 0), 0);
+                    const n = items.length;
+                    const avg = n > 0 ? (sum / n) : 0;
+                    hint = shownTotal === null
+                        ? `Average = ${avg.toFixed(4)} (computed as sum(parts)/${n}).`
+                        : `Average = ${avg.toFixed(4)} (sum(parts)/${n}). Cell shows: ${shownTotal}.`;
+                }
+
+                renderChart(title, items, hint);
                 bootstrap.Modal.getOrCreateInstance(modalEl).show();
             });
 
@@ -662,23 +673,6 @@ else
 @functions {
     private static string ToggleDir(string currentDir) =>
         string.Equals(currentDir, "desc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc";
-
-    private static bool LooksLikeSummationFormula(string? formula)
-    {
-        if (string.IsNullOrWhiteSpace(formula))
-        {
-            return false;
-        }
-
-        var f = formula.Trim();
-        if (!f.StartsWith("=", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
-        return f.Contains('+', StringComparison.Ordinal)
-               || f.Contains("SUM(", StringComparison.OrdinalIgnoreCase);
-    }
 
     private static IHtmlContent RenderHeader(
         SamorodinkaTech.FormStructures.Web.Models.FormStructure structure,

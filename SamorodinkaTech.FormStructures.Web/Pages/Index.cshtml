@@ -13,6 +13,14 @@
 
 <hr />
 
+@if (TempData["DeleteMessage"] is string deleteMsg && !string.IsNullOrWhiteSpace(deleteMsg))
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @deleteMsg
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+}
+
 @if (Model.Forms.Count == 0)
 {
     <div class="alert alert-warning">No forms stored yet.</div>
