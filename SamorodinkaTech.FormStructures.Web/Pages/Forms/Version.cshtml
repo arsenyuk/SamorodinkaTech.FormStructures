@@ -248,11 +248,11 @@
                         <tbody>
                         @foreach (var c in Model.Structure.Columns)
                         {
-                            var groupPath = c.Path;
-                            var groupSep = groupPath.LastIndexOf(" / ", StringComparison.Ordinal);
+                            var groupPath = string.Empty;
+                            var groupSep = c.Path.LastIndexOf(" / ", StringComparison.Ordinal);
                             if (groupSep > 0)
                             {
-                                groupPath = groupPath.Substring(0, groupSep);
+                                groupPath = c.Path.Substring(0, groupSep);
                             }
 
                             <tr>
