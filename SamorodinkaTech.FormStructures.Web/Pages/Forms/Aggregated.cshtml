@@ -1,0 +1,966 @@
+@page "/forms/{formNumber}/data/aggregated"
+@using Microsoft.AspNetCore.Html
+@using Microsoft.AspNetCore.Mvc.Rendering
+@model SamorodinkaTech.FormStructures.Web.Pages.Forms.AggregatedModel
+@{
+    var formTitle = Model.Structure?.FormTitle;
+    var visiblePaths = Model.VisibleColumns.Select(c => c.Path).ToHashSet(StringComparer.Ordinal);
+    var rbHasFilter = Model.AppliedReferenceBookFilters.Count > 0;
+    var tableColCount =
+        (Model.ShowUploadedColumn ? 1 : 0)
+        + (Model.ShowFileColumn ? 1 : 0)
+        + (Model.ShowUploadIdColumn ? 1 : 0)
+        + Model.VisibleColumns.Count
+        + 1; // actions
+    var rbQueryForLinks = rbHasFilter
+        ? $"?{Model.ReferenceBookQuery.TrimStart('&')}"
+        : string.Empty;
+
+    ViewData["Title"] = string.IsNullOrWhiteSpace(formTitle)
+        ? "Aggregated data"
+    : $"{formTitle} · Aggregated data";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        @if (string.IsNullOrWhiteSpace(formTitle))
+        {
+            <h1 class="h4 mb-0">Aggregated data</h1>
+            <div class="text-muted"><small>@Model.UploadCount upload(s)</small></div>
+        }
+        else
+        {
+            <h1 class="h4 mb-0">@formTitle</h1>
+            <div class="h6 mb-0 mt-1">Aggregated data</div>
+            <div class="text-muted"><small>@Model.UploadCount upload(s)</small></div>
+        }
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-primary btn-sm" href="?handler=Xlsx&version=@Model.Version&sort=@Uri.EscapeDataString(Model.SortKey)&dir=@Uri.EscapeDataString(Model.SortDir)@Model.SelectedColsQuery@Model.ReferenceBookQuery">Download .xlsx</a>
+        <a class="btn btn-outline-primary btn-sm" href="?handler=Csv&version=@Model.Version&sort=@Uri.EscapeDataString(Model.SortKey)&dir=@Uri.EscapeDataString(Model.SortDir)@Model.SelectedColsQuery@Model.ReferenceBookQuery">Download .csv</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">Uploads</a>
+        <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Schema</a>
+    </div>
+</div>
+
+<hr />
+
+@if (TempData["UploadMessage"] is string uploadMsg)
+{
+    <div class="alert alert-success">@uploadMsg</div>
+}
+
+@if (Model.Structure is null)
+{
+    <div class="alert alert-warning">Form schema not found.</div>
+}
+else
+{
+    <div class="card mb-3">
+        <div class="card-body">
+            <h2 class="h6">Upload data</h2>
+            <form method="post" enctype="multipart/form-data" asp-page-handler="UploadData">
+                <input type="hidden" name="formNumber" value="@Model.FormNumber" />
+                <input type="hidden" name="version" value="@Model.Version" />
+                <input type="hidden" name="sort" value="@Model.SortKey" />
+                <input type="hidden" name="dir" value="@Model.SortDir" />
+                @foreach (var c in Model.SelectedCols)
+                {
+                    <input type="hidden" name="cols" value="@c" />
+                }
+                @foreach (var f in Model.AppliedReferenceBookFilters)
+                {
+                    <input type="hidden" name="rbCol" value="@f.Column" />
+                    <input type="hidden" name="rbValue" value="@f.Value" />
+                    <input type="hidden" name="rbMatch" value="@(f.Match == AggregatedModel.ReferenceBookMatch.Contains ? "contains" : "eq")" />
+                }
+
+                <div class="mb-3">
+                    <label class="form-label" for="DataUpload">Filled Excel file (.xlsx)</label>
+                    <input class="form-control" type="file" asp-for="DataUpload" accept=".xlsx" />
+                    <div class="form-text">File schema must match one of the stored versions.</div>
+                    <span class="text-danger" asp-validation-for="DataUpload"></span>
+                </div>
+
+                <div class="text-danger" asp-validation-summary="All"></div>
+
+                <button class="btn btn-primary btn-sm" type="submit">Upload &amp; Save Data</button>
+            </form>
+        </div>
+    </div>
+
+    <div class="position-relative">
+        <div class="collapse position-absolute end-0 top-0 mt-2 me-2 shadow" id="columnSettingsPanel" style="z-index: 2000; width: min(900px, 90vw);">
+            <form method="get" class="border rounded p-3 bg-light" style="max-height: 70vh; overflow: auto;">
+                <input type="hidden" name="version" value="@Model.Version" />
+                <input type="hidden" name="sort" value="@Model.SortKey" />
+                <input type="hidden" name="dir" value="@Model.SortDir" />
+                @foreach (var f in Model.AppliedReferenceBookFilters)
+                {
+                    <input type="hidden" name="rbCol" value="@f.Column" />
+                    <input type="hidden" name="rbValue" value="@f.Value" />
+                    <input type="hidden" name="rbMatch" value="@(f.Match == AggregatedModel.ReferenceBookMatch.Contains ? "contains" : "eq")" />
+                }
+
+                <div class="mb-2"><strong>Technical</strong></div>
+                <div class="d-flex flex-wrap gap-3 mb-3">
+                    <label class="form-check">
+                        <input class="form-check-input" type="checkbox" name="cols" value="uploaded" checked="@(Model.ShowUploadedColumn ? "checked" : null)" />
+                        <span class="form-check-label">Uploaded (UTC)</span>
+                    </label>
+                    <label class="form-check">
+                        <input class="form-check-input" type="checkbox" name="cols" value="file" checked="@(Model.ShowFileColumn ? "checked" : null)" />
+                        <span class="form-check-label">File</span>
+                    </label>
+                    <label class="form-check">
+                        <input class="form-check-input" type="checkbox" name="cols" value="uploadId" checked="@(Model.ShowUploadIdColumn ? "checked" : null)" />
+                        <span class="form-check-label">UploadId</span>
+                    </label>
+                </div>
+
+                <div class="mb-2"><strong>Data</strong></div>
+                <div class="row g-2">
+                    @foreach (var col in Model.Structure.Columns)
+                    {
+                        var token = $"c{col.Index}";
+                        var isChecked = visiblePaths.Contains(col.Path);
+
+                        <div class="col-12 col-md-6 col-lg-4">
+                            <label class="form-check">
+                                <input class="form-check-input" type="checkbox" name="cols" value="@token" checked="@(isChecked ? "checked" : null)" />
+                                <span class="form-check-label">@col.Name</span>
+                            </label>
+                        </div>
+                    }
+                </div>
+
+                <div class="mt-3 d-flex gap-2 justify-content-end">
+                    <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+                </div>
+            </form>
+        </div>
+
+        @if (Model.FilterColumns.Count > 0)
+        {
+            <div class="collapse @(rbHasFilter ? "show" : "")" id="rbFilterPanel">
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <form method="get">
+                            <input type="hidden" name="version" value="@Model.Version" />
+                            <input type="hidden" name="sort" value="@Model.SortKey" />
+                            <input type="hidden" name="dir" value="@Model.SortDir" />
+                            @foreach (var c in Model.SelectedCols)
+                            {
+                                <input type="hidden" name="cols" value="@c" />
+                            }
+
+                            <div id="rbFilters" class="d-flex flex-column gap-2">
+                                @for (var i = 0; i < Model.ReferenceBookFilterInputs.Count; i++)
+                                {
+                                    var input = Model.ReferenceBookFilterInputs[i];
+
+                                    <div class="row g-2 align-items-end rb-filter-row" data-rb-index="@i">
+                                        <div class="col-12 col-md-4">
+                                            <label class="form-label" for="rbCol_@i">Column</label>
+                                            <select class="form-select form-select-sm" id="rbCol_@i" name="rbCol" data-rb-index="@i">
+                                                <option value="">(no filter)</option>
+                                                @foreach (var c in Model.FilterColumns)
+                                                {
+                                                    var token = $"c{c.Index}";
+                                                    <option value="@token" selected="@(string.Equals(input.Column, token, StringComparison.OrdinalIgnoreCase) ? "selected" : null)">@c.Name</option>
+                                                }
+                                            </select>
+                                        </div>
+
+                                        <div class="col-12 col-md-2">
+                                            <label class="form-label" for="rbMatch_@i">Match</label>
+                                            <select class="form-select form-select-sm" id="rbMatch_@i" name="rbMatch" data-rb-index="@i">
+                                                <option value="eq" selected="@(string.Equals(input.Match, "contains", StringComparison.OrdinalIgnoreCase) ? null : "selected")">Equals</option>
+                                                <option value="contains" selected="@(string.Equals(input.Match, "contains", StringComparison.OrdinalIgnoreCase) ? "selected" : null)">Contains</option>
+                                            </select>
+                                        </div>
+
+                                        <div class="col-12 col-md-4">
+                                            <label class="form-label" for="rbValue_@i">Value</label>
+                                            <input class="form-control form-control-sm" id="rbValue_@i" name="rbValue" value="@input.Value" placeholder="Choose or type" list="rbValues_@i" data-rb-index="@i" />
+                                            <datalist id="rbValues_@i"></datalist>
+                                        </div>
+
+                                        <div class="col-12 col-md-2 d-flex gap-2">
+                                            <button type="button" class="btn btn-outline-secondary btn-sm" data-rb-remove="@i">Remove</button>
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+
+                            <div class="mt-2 d-flex gap-2">
+                                <button type="submit" class="btn btn-primary btn-sm">Apply</button>
+                                <button type="button" class="btn btn-outline-secondary btn-sm" id="rbAddFilter">Add filter</button>
+                                <a class="btn btn-outline-secondary btn-sm" href="?version=@Model.Version&sort=@Uri.EscapeDataString(Model.SortKey)&dir=@Uri.EscapeDataString(Model.SortDir)@Model.SelectedColsQuery">Clear</a>
+                            </div>
+                        </form>
+
+                        @if (rbHasFilter)
+                        {
+                            <div class="text-muted mt-2">
+                                Showing <strong>@Model.FilteredRowCount</strong> of <strong>@Model.TotalRowCount</strong> row(s).
+                            </div>
+                        }
+                    </div>
+                </div>
+            </div>
+        }
+
+        <div class="table-responsive">
+        <table class="table table-sm table-striped table-bordered align-middle">
+            <thead>
+            @RenderHeader(
+                Model.Structure,
+                Model.SortKey,
+                Model.SortDir,
+                Model.Version,
+                Model.SelectedCols,
+                Model.ReferenceBookQuery,
+                Model.FilterColumns.Count > 0,
+                Model.ShowUploadedColumn,
+                Model.ShowFileColumn,
+                Model.ShowUploadIdColumn,
+                Model.VisibleColumns)
+            </thead>
+            <tbody>
+            @if (Model.TotalRowCount == 0)
+            {
+                <tr>
+                    <td colspan="@tableColCount">
+                        <div class="alert alert-warning mb-0">No data uploaded for this schema version yet.</div>
+                    </td>
+                </tr>
+            }
+            else if (Model.Rows.Count == 0)
+            {
+                <tr>
+                    <td colspan="@tableColCount">
+                        <div class="alert alert-warning mb-0">No rows match the current filters.</div>
+                    </td>
+                </tr>
+            }
+            else
+            {
+                @foreach (var r in Model.Rows)
+                {
+                    var uploadHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{r.FormVersion}/{Uri.EscapeDataString(r.UploadId)}{rbQueryForLinks}";
+                    var fileHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{r.FormVersion}/{Uri.EscapeDataString(r.UploadId)}/file";
+
+                    <tr>
+                        @if (Model.ShowUploadedColumn)
+                        {
+                            <td><code>@r.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                        }
+                        @if (Model.ShowFileColumn)
+                        {
+                            <td>
+                                <div><a href="@fileHref">@r.OriginalFileName</a></div>
+                                @if (!Model.ShowUploadIdColumn)
+                                {
+                                    <div class="text-muted"><small><code>@r.UploadId</code></small></div>
+                                }
+                            </td>
+                        }
+                        @if (Model.ShowUploadIdColumn)
+                        {
+                            <td><code>@r.UploadId</code></td>
+                        }
+                        @foreach (var col in Model.VisibleColumns)
+                        {
+                            r.Values.TryGetValue(col.Path, out var v);
+                            <td data-excel-col="@col.ExcelLeafColumn" data-col-name="@col.Name">
+                                @v
+                                @if (Model.ChartableFormulasByPath.TryGetValue(col.Path, out var chartInfo))
+                                {
+                                    var kindToken = chartInfo.Kind switch
+                                    {
+                                        SamorodinkaTech.FormStructures.Web.Services.ChartAggregationKind.Average => "avg",
+                                        SamorodinkaTech.FormStructures.Web.Services.ChartAggregationKind.Difference => "diff",
+                                        _ => "sum",
+                                    };
+                                    var colsToken = string.Join(",", chartInfo.Columns);
+
+                                    var totalName = col.Name;
+                                    if (chartInfo.TitleColumn is int titleExcelCol && Model.Structure is not null)
+                                    {
+                                        var titleCol = Model.Structure.Columns.FirstOrDefault(c => c.ExcelLeafColumn == titleExcelCol);
+                                        if (titleCol is not null && !string.IsNullOrWhiteSpace(titleCol.Name))
+                                        {
+                                            totalName = titleCol.Name;
+                                        }
+                                    }
+                                    <button type="button"
+                                            class="btn btn-outline-secondary btn-sm py-0 px-1 js-sum-pie"
+                                            data-kind="@kindToken"
+                                            data-cols="@colsToken"
+                                            data-total-name="@totalName">
+                                        Pie
+                                    </button>
+                                }
+                            </td>
+                        }
+                        <td class="text-end">
+                            <div class="d-flex gap-2 justify-content-end">
+                                <a class="btn btn-outline-secondary btn-sm" href="@uploadHref">Data</a>
+                                <a class="btn btn-outline-secondary btn-sm" href="@fileHref">File</a>
+                            </div>
+                        </td>
+                    </tr>
+                }
+            }
+            </tbody>
+        </table>
+        </div>
+    </div>
+
+    <div class="modal fade sum-pie-modal" id="sumPieModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="sumPieTitle">Pie chart</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                </div>
+                <div class="modal-body d-flex flex-column gap-3">
+                    <div class="sum-pie-canvas-wrap flex-grow-1">
+                        <canvas id="sumPieCanvas"></canvas>
+                    </div>
+
+                    <div class="sum-pie-legend-wrap">
+                        <table class="table table-sm mb-0">
+                            <thead>
+                                <tr>
+                                    <th>Part</th>
+                                    <th class="text-end">Value</th>
+                                    <th class="text-end">%</th>
+                                    <th class="text-end">Color</th>
+                                </tr>
+                            </thead>
+                            <tbody id="sumPieLegend"></tbody>
+                        </table>
+                        <div class="text-muted mt-2" id="sumPieHint" style="display:none;"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+}
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script>
+        (() => {
+            const valuesByCol = @Html.Raw(Model.ReferenceBookValuesJson);
+
+            function fillDatalist(index) {
+                const colSelect = document.getElementById(`rbCol_${index}`);
+                const list = document.getElementById(`rbValues_${index}`);
+                if (!colSelect || !list) return;
+
+                list.innerHTML = '';
+                const token = (colSelect.value || '').trim();
+                const values = valuesByCol[token] || [];
+                for (const v of values) {
+                    const opt = document.createElement('option');
+                    opt.value = v;
+                    list.appendChild(opt);
+                }
+            }
+
+            function getNextIndex() {
+                const ids = Array.from(document.querySelectorAll('select[id^="rbCol_"]'))
+                    .map(el => el.id.substring('rbCol_'.length))
+                    .map(x => parseInt(x, 10))
+                    .filter(x => !Number.isNaN(x));
+                if (ids.length === 0) return 0;
+                return Math.max(...ids) + 1;
+            }
+
+            function wireRow(index) {
+                const colSelect = document.getElementById(`rbCol_${index}`);
+                const valInput = document.getElementById(`rbValue_${index}`);
+                if (colSelect) {
+                    colSelect.addEventListener('change', () => {
+                        if (valInput) {
+                            valInput.value = '';
+                        }
+                        fillDatalist(index);
+                        if (valInput) {
+                            // Some browsers don't refresh datalist UI until input event.
+                            valInput.dispatchEvent(new Event('input', { bubbles: true }));
+                        }
+                    });
+                }
+
+                const removeBtn = document.querySelector(`[data-rb-remove="${index}"]`);
+                if (removeBtn) {
+                    removeBtn.addEventListener('click', () => {
+                        const container = document.getElementById('rbFilters');
+                        const row = document.querySelector(`.rb-filter-row[data-rb-index="${index}"]`);
+                        if (!container || !row) return;
+
+                        const rowCount = container.querySelectorAll('.rb-filter-row').length;
+                        if (rowCount <= 1) {
+                            const val = document.getElementById(`rbValue_${index}`);
+                            const match = document.getElementById(`rbMatch_${index}`);
+                            if (colSelect) colSelect.value = '';
+                            if (match) match.value = 'eq';
+                            if (val) val.value = '';
+                            fillDatalist(index);
+                            return;
+                        }
+
+                        row.remove();
+                    });
+                }
+            }
+
+            function addRow() {
+                const container = document.getElementById('rbFilters');
+                if (!container) return;
+
+                const index = getNextIndex();
+
+                const firstSelect = document.querySelector('select[id^="rbCol_"]');
+                const optionsHtml = firstSelect ? firstSelect.innerHTML : '<option value="">(no filter)</option>';
+
+                const row = document.createElement('div');
+                row.className = 'row g-2 align-items-end rb-filter-row';
+                row.setAttribute('data-rb-index', String(index));
+                row.innerHTML = `
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="rbCol_${index}">Column</label>
+                        <select class="form-select form-select-sm" id="rbCol_${index}" name="rbCol" data-rb-index="${index}">${optionsHtml}</select>
+                    </div>
+                    <div class="col-12 col-md-2">
+                        <label class="form-label" for="rbMatch_${index}">Match</label>
+                        <select class="form-select form-select-sm" id="rbMatch_${index}" name="rbMatch" data-rb-index="${index}">
+                            <option value="eq" selected>Equals</option>
+                            <option value="contains">Contains</option>
+                        </select>
+                    </div>
+                    <div class="col-12 col-md-4">
+                        <label class="form-label" for="rbValue_${index}">Value</label>
+                        <input class="form-control form-control-sm" id="rbValue_${index}" name="rbValue" value="" placeholder="Choose or type" list="rbValues_${index}" data-rb-index="${index}" />
+                        <datalist id="rbValues_${index}"></datalist>
+                    </div>
+                    <div class="col-12 col-md-2 d-flex gap-2">
+                        <button type="button" class="btn btn-outline-secondary btn-sm" data-rb-remove="${index}">Remove</button>
+                    </div>
+                `;
+
+                container.appendChild(row);
+
+                const newSelect = document.getElementById(`rbCol_${index}`);
+                if (newSelect) newSelect.value = '';
+                const newMatch = document.getElementById(`rbMatch_${index}`);
+                if (newMatch) newMatch.value = 'eq';
+
+                wireRow(index);
+                fillDatalist(index);
+            }
+
+            Array.from(document.querySelectorAll('.rb-filter-row[data-rb-index]')).forEach(r => {
+                const index = parseInt(r.getAttribute('data-rb-index') || '0', 10);
+                wireRow(index);
+                fillDatalist(index);
+            });
+
+            const addBtn = document.getElementById('rbAddFilter');
+            if (addBtn) {
+                addBtn.addEventListener('click', addRow);
+            }
+        })();
+    </script>
+
+    <script>
+        (() => {
+            const modalEl = document.getElementById('sumPieModal');
+            const titleEl = document.getElementById('sumPieTitle');
+            const canvas = document.getElementById('sumPieCanvas');
+            const legendBody = document.getElementById('sumPieLegend');
+            const hintEl = document.getElementById('sumPieHint');
+            if (!(modalEl instanceof HTMLElement)
+                || !(titleEl instanceof HTMLElement)
+                || !(canvas instanceof HTMLCanvasElement)
+                || !(legendBody instanceof HTMLElement)
+                || !(hintEl instanceof HTMLElement)) {
+                return;
+            }
+
+            const palette = [
+                '#0d6efd', '#198754', '#dc3545', '#ffc107', '#6f42c1', '#20c997',
+                '#fd7e14', '#0dcaf0', '#adb5bd', '#6610f2', '#d63384', '#6c757d'
+            ];
+
+            let chart = null;
+
+            function escapeHtml(s) {
+                return (s ?? '').replace(/[&<>"]/g, (ch) => ({
+                    '&': '&amp;',
+                    '<': '&lt;',
+                    '>': '&gt;',
+                    '"': '&quot;'
+                }[ch] || ch));
+            }
+
+            function parseNumber(text) {
+                if (!text) return null;
+                const t = text.trim().replace(/\s/g, '');
+                if (!t) return null;
+                const normalized = t.replace(',', '.');
+                const n = Number(normalized);
+                return Number.isFinite(n) ? n : null;
+            }
+
+            function tryParseColsToken(token) {
+                if (!token) return null;
+                const parts = token.split(',').map(x => parseInt(x.trim(), 10)).filter(x => Number.isFinite(x) && x > 0);
+                const uniq = Array.from(new Set(parts));
+                return uniq.length >= 2 ? uniq : null;
+            }
+
+            function getTdTextWithoutButtons(td) {
+                const clone = td.cloneNode(true);
+                clone.querySelectorAll('button').forEach(b => b.remove());
+                return clone.textContent || '';
+            }
+
+            function computeDialogHeightPx(rowCount) {
+                const viewportMax = Math.floor(window.innerHeight * 0.92);
+                const min = 520; // baseline
+                const perRow = 22;
+                const desired = (min * 2) + Math.max(0, rowCount - 1) * perRow;
+                return Math.min(viewportMax, Math.max(min, desired));
+            }
+
+            function applyDialogHeight(rowCount) {
+                const h = computeDialogHeightPx(rowCount);
+                modalEl.style.setProperty('--sum-pie-dialog-height', `${h}px`);
+            }
+
+            function renderChart(title, items, hint) {
+                const t = (title || '').trim();
+                if (t.length === 0) {
+                    titleEl.textContent = '';
+                    titleEl.style.display = 'none';
+                } else {
+                    titleEl.textContent = t;
+                    titleEl.style.display = '';
+                }
+                legendBody.innerHTML = '';
+                if (hint) {
+                    hintEl.textContent = hint;
+                    hintEl.style.display = '';
+                } else {
+                    hintEl.style.display = 'none';
+                    hintEl.textContent = '';
+                }
+
+                applyDialogHeight(items.length);
+
+                if (chart) {
+                    chart.destroy();
+                    chart = null;
+                }
+
+                const total = items.reduce((s, x) => s + (x.value || 0), 0);
+                for (const it of items) {
+                    const pct = total > 0 ? (it.value / total) * 100 : 0;
+                    const tr = document.createElement('tr');
+                    tr.innerHTML = `
+                        <td>${escapeHtml(it.name)}</td>
+                        <td class="text-end"><code>${it.value}</code></td>
+                        <td class="text-end"><code>${pct.toFixed(1)}</code></td>
+                        <td class="text-end"><span class="d-inline-block rounded" style="width: 14px; height: 14px; background: ${it.color}; border: 1px solid rgba(0,0,0,0.1);"></span></td>
+                    `;
+                    legendBody.appendChild(tr);
+                }
+
+                const labels = items.map(x => x.name);
+                const values = items.map(x => x.value);
+                const colors = items.map(x => x.color);
+
+                // If Chart.js isn't available, keep legend-only.
+                if (typeof Chart === 'undefined') {
+                    hintEl.textContent = 'Chart.js is not available.';
+                    hintEl.style.display = '';
+                    return;
+                }
+
+                chart = new Chart(canvas.getContext('2d'), {
+                    type: 'pie',
+                    data: {
+                        labels,
+                        datasets: [{
+                            data: values,
+                            backgroundColor: colors,
+                            borderColor: 'rgba(255,255,255,0.9)',
+                            borderWidth: 1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        maintainAspectRatio: false,
+                        plugins: {
+                            legend: { display: false }
+                        }
+                    }
+                });
+            }
+
+            document.addEventListener('click', (e) => {
+                const btn = e.target instanceof HTMLElement ? e.target.closest('.js-sum-pie') : null;
+                if (!(btn instanceof HTMLElement)) return;
+
+                const tr = btn.closest('tr');
+                if (!(tr instanceof HTMLElement)) return;
+
+                const totalName = btn.getAttribute('data-total-name') || 'Sum';
+
+                const kind = (btn.getAttribute('data-kind') || 'sum').toLowerCase();
+                const cols = tryParseColsToken(btn.getAttribute('data-cols') || '');
+                if (!cols) {
+                    renderChart(totalName, [], 'Unsupported formula format.');
+                    bootstrap.Modal.getOrCreateInstance(modalEl).show();
+                    return;
+                }
+
+                const items = [];
+                for (let i = 0; i < cols.length; i++) {
+                    const c = cols[i];
+                    const cell = tr.querySelector(`td[data-excel-col="${c}"]`);
+                    if (!(cell instanceof HTMLElement)) continue;
+
+                    const name = cell.getAttribute('data-col-name') || `Col ${c}`;
+                    const value = parseNumber(cell.textContent);
+                    if (value === null) continue;
+
+                    items.push({ name, value, color: palette[i % palette.length] });
+                }
+
+                items.sort((a, b) => b.value - a.value);
+                for (let i = 0; i < items.length; i++) {
+                    items[i].color = palette[i % palette.length];
+                }
+
+                let title = totalName;
+                let hint = '';
+                if (kind === 'avg') {
+                    title = '';
+                    const totalTd = btn.closest('td');
+                    const shownTotal = totalTd instanceof HTMLElement ? parseNumber(getTdTextWithoutButtons(totalTd)) : null;
+                    const sum = items.reduce((s, x) => s + (x.value || 0), 0);
+                    const n = items.length;
+                    const avg = n > 0 ? (sum / n) : 0;
+                    hint = shownTotal === null
+                        ? `Average = ${avg.toFixed(4)} (computed as sum(parts)/${n}).`
+                        : `Average = ${avg.toFixed(4)} (sum(parts)/${n}). Cell shows: ${shownTotal}.`;
+                }
+
+                renderChart(title, items, hint);
+                bootstrap.Modal.getOrCreateInstance(modalEl).show();
+            });
+
+            modalEl.addEventListener('hidden.bs.modal', () => {
+                if (chart) {
+                    chart.destroy();
+                    chart = null;
+                }
+            });
+
+            window.addEventListener('resize', () => {
+                // Reapply a safe max height on resize.
+                applyDialogHeight(legendBody.querySelectorAll('tr').length);
+                if (chart) {
+                    chart.resize();
+                }
+            });
+        })();
+    </script>
+}
+
+@functions {
+    private static string ToggleDir(string currentDir) =>
+        string.Equals(currentDir, "desc", StringComparison.OrdinalIgnoreCase) ? "asc" : "desc";
+
+    private static IHtmlContent RenderHeader(
+        SamorodinkaTech.FormStructures.Web.Models.FormStructure structure,
+        string currentSort,
+        string currentDir,
+        int version,
+        IReadOnlyList<string> selectedCols,
+        string referenceBookQuery,
+        bool canFilterByReferenceBooks,
+        bool showUploaded,
+        bool showFile,
+        bool showUploadId,
+        IReadOnlyList<SamorodinkaTech.FormStructures.Web.Models.ColumnDefinition> visibleColumns)
+    {
+        var allNodes = new List<SamorodinkaTech.FormStructures.Web.Models.HeaderNode>();
+
+        void Walk(SamorodinkaTech.FormStructures.Web.Models.HeaderNode node)
+        {
+            allNodes.Add(node);
+            foreach (var child in node.Children)
+            {
+                Walk(child);
+            }
+        }
+
+        foreach (var root in structure.Header.OrderBy(n => n.ColStart).ThenBy(n => n.RowStart))
+        {
+            Walk(root);
+        }
+
+        var colsQuery = selectedCols.Count == 0
+            ? string.Empty
+            : string.Concat(selectedCols.Select(c => $"&cols={Uri.EscapeDataString(c)}"));
+
+        var rbQuery = referenceBookQuery ?? string.Empty;
+
+        var hasHeader = allNodes.Count > 0;
+        var minRow = hasHeader ? allNodes.Min(n => n.RowStart) : 1;
+        var maxRow = hasHeader ? allNodes.Max(n => n.RowEnd) : 1;
+
+        var leaves = hasHeader
+            ? allNodes
+                .Where(n => n.Children.Count == 0)
+                .OrderBy(n => n.ColStart)
+                .ToArray()
+            : Array.Empty<SamorodinkaTech.FormStructures.Web.Models.HeaderNode>();
+
+        var leafIndexByColStart = new Dictionary<int, int>();
+        for (var i = 0; i < leaves.Length; i++)
+        {
+            leafIndexByColStart[leaves[i].ColStart] = i + 1; // 1-based
+        }
+
+        var visiblePaths = visibleColumns
+            .Select(c => c.Path)
+            .ToHashSet(StringComparer.Ordinal);
+
+        var visibleLeafColStarts = new HashSet<int>();
+        if (hasHeader && leaves.Length == structure.Columns.Count)
+        {
+            foreach (var c in visibleColumns)
+            {
+                var idx = c.Index - 1;
+                if (idx >= 0 && idx < leaves.Length)
+                {
+                    visibleLeafColStarts.Add(leaves[idx].ColStart);
+                }
+            }
+        }
+
+        var header = new HtmlContentBuilder();
+
+        void AppendColumnSettings(TagBuilder thActions)
+        {
+            var tools = new TagBuilder("div");
+            tools.AddCssClass("d-flex");
+            tools.AddCssClass("gap-2");
+            tools.AddCssClass("justify-content-end");
+
+            var btnCols = new TagBuilder("button");
+            btnCols.AddCssClass("btn");
+            btnCols.AddCssClass("btn-outline-secondary");
+            btnCols.AddCssClass("btn-sm");
+            btnCols.Attributes["type"] = "button";
+            btnCols.Attributes["data-bs-toggle"] = "collapse";
+            btnCols.Attributes["data-bs-target"] = "#columnSettingsPanel";
+            btnCols.Attributes["aria-expanded"] = "false";
+            btnCols.Attributes["aria-controls"] = "columnSettingsPanel";
+            btnCols.InnerHtml.Append("Columns");
+            tools.InnerHtml.AppendHtml(btnCols);
+
+            if (canFilterByReferenceBooks)
+            {
+                var btnFilters = new TagBuilder("button");
+                btnFilters.AddCssClass("btn");
+                btnFilters.AddCssClass("btn-outline-secondary");
+                btnFilters.AddCssClass("btn-sm");
+                btnFilters.Attributes["type"] = "button";
+                btnFilters.Attributes["data-bs-toggle"] = "collapse";
+                btnFilters.Attributes["data-bs-target"] = "#rbFilterPanel";
+                btnFilters.Attributes["aria-expanded"] = "false";
+                btnFilters.Attributes["aria-controls"] = "rbFilterPanel";
+                btnFilters.InnerHtml.Append("Filters");
+                tools.InnerHtml.AppendHtml(btnFilters);
+            }
+
+            var aReset = new TagBuilder("a");
+            aReset.AddCssClass("btn");
+            aReset.AddCssClass("btn-link");
+            aReset.AddCssClass("btn-sm");
+            aReset.Attributes["href"] = $"?version={version}&sort={Uri.EscapeDataString(currentSort)}&dir={Uri.EscapeDataString(currentDir)}";
+            aReset.InnerHtml.Append("Reset");
+            tools.InnerHtml.AppendHtml(aReset);
+
+            thActions.InnerHtml.AppendHtml(tools);
+        }
+
+        if (!hasHeader || (hasHeader && leaves.Length != structure.Columns.Count))
+        {
+            var tr = new TagBuilder("tr");
+            var rowspanText = (maxRow - minRow + 1).ToString();
+
+            if (showUploaded)
+            {
+                var th = new TagBuilder("th");
+                th.Attributes["rowspan"] = rowspanText;
+                th.InnerHtml.Append("Uploaded (UTC)");
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            if (showFile)
+            {
+                var th = new TagBuilder("th");
+                th.Attributes["rowspan"] = rowspanText;
+                th.InnerHtml.Append("File");
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            if (showUploadId)
+            {
+                var th = new TagBuilder("th");
+                th.Attributes["rowspan"] = rowspanText;
+                th.InnerHtml.Append("UploadId");
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            foreach (var col in visibleColumns)
+            {
+                var sortKey = $"c{col.Index}";
+                var nextDir = string.Equals(currentSort, sortKey, StringComparison.OrdinalIgnoreCase)
+                    ? ToggleDir(currentDir)
+                    : "asc";
+
+                var th = new TagBuilder("th");
+                var a = new TagBuilder("a");
+                a.Attributes["href"] = $"?version={version}&sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}{colsQuery}{rbQuery}";
+                a.InnerHtml.Append(col.Name);
+                th.InnerHtml.AppendHtml(a);
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            var thActions = new TagBuilder("th");
+            thActions.Attributes["rowspan"] = rowspanText;
+            thActions.AddCssClass("text-end");
+            AppendColumnSettings(thActions);
+            tr.InnerHtml.AppendHtml(thActions);
+
+            header.AppendHtml(tr);
+            return header;
+        }
+
+        for (var r = minRow; r <= maxRow; r++)
+        {
+            var tr = new TagBuilder("tr");
+
+            if (r == minRow)
+            {
+                var rowspanText = (maxRow - minRow + 1).ToString();
+
+                if (showUploaded)
+                {
+                    var th = new TagBuilder("th");
+                    th.Attributes["rowspan"] = rowspanText;
+                    th.InnerHtml.Append("Uploaded (UTC)");
+                    tr.InnerHtml.AppendHtml(th);
+                }
+
+                if (showFile)
+                {
+                    var th = new TagBuilder("th");
+                    th.Attributes["rowspan"] = rowspanText;
+                    th.InnerHtml.Append("File");
+                    tr.InnerHtml.AppendHtml(th);
+                }
+
+                if (showUploadId)
+                {
+                    var th = new TagBuilder("th");
+                    th.Attributes["rowspan"] = rowspanText;
+                    th.InnerHtml.Append("UploadId");
+                    tr.InnerHtml.AppendHtml(th);
+                }
+            }
+
+            var rowCells = allNodes
+                .Where(n => n.RowStart == r)
+                .OrderBy(n => n.ColStart)
+                .ToArray();
+
+            foreach (var n in rowCells)
+            {
+                var visibleSpan = 0;
+                for (var col = n.ColStart; col <= n.ColEnd; col++)
+                {
+                    if (visibleLeafColStarts.Contains(col))
+                    {
+                        visibleSpan++;
+                    }
+                }
+
+                if (visibleSpan <= 0)
+                {
+                    continue;
+                }
+
+                var th = new TagBuilder("th");
+                var rowspan = n.RowEnd - n.RowStart + 1;
+
+                if (visibleSpan > 1)
+                {
+                    th.Attributes["colspan"] = visibleSpan.ToString();
+                }
+
+                if (rowspan > 1)
+                {
+                    th.Attributes["rowspan"] = rowspan.ToString();
+                }
+
+                if (n.Children.Count == 0 && leafIndexByColStart.TryGetValue(n.ColStart, out var leafIndex))
+                {
+                    var sortKey = $"c{leafIndex}";
+                    var nextDir = string.Equals(currentSort, sortKey, StringComparison.OrdinalIgnoreCase)
+                        ? ToggleDir(currentDir)
+                        : "asc";
+
+                    var a = new TagBuilder("a");
+                    a.Attributes["href"] = $"?version={version}&sort={Uri.EscapeDataString(sortKey)}&dir={Uri.EscapeDataString(nextDir)}{colsQuery}{rbQuery}";
+                    a.InnerHtml.Append(n.Label);
+
+                    th.InnerHtml.AppendHtml(a);
+                }
+                else
+                {
+                    th.InnerHtml.Append(n.Label);
+                }
+
+                tr.InnerHtml.AppendHtml(th);
+            }
+
+            if (r == minRow)
+            {
+                var thActions = new TagBuilder("th");
+                thActions.Attributes["rowspan"] = (maxRow - minRow + 1).ToString();
+                thActions.AddCssClass("text-end");
+
+                AppendColumnSettings(thActions);
+                tr.InnerHtml.AppendHtml(thActions);
+            }
+
+            header.AppendHtml(tr);
+        }
+
+        return header;
+    }
+}

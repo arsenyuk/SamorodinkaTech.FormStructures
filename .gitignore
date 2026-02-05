@@ -1,0 +1,35 @@
+# Build outputs
+**/bin/
+**/obj/
+
+# User-specific files
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+
+# OS files
+.DS_Store
+
+# Logs and storage (keep folders via .gitkeep)
+SamorodinkaTech.FormStructures.Web/logs/*
+!SamorodinkaTech.FormStructures.Web/logs/.gitkeep
+SamorodinkaTech.FormStructures.Web/storage/*
+!SamorodinkaTech.FormStructures.Web/storage/.gitkeep
+
+# ASP.NET Core
+appsettings.*.json
+!appsettings.json
+
+# VS / Rider
+.vscode/
+.idea/
+*.iml
+
+# Root logs (when run from repo root)
+logs/
+
+# Tool outputs
+tools/**/out/
+
+.fake

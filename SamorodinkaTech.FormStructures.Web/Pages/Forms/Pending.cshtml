@@ -1,0 +1,200 @@
+@page "/forms/{formNumber}/pending/{pendingId}"
+@using Microsoft.AspNetCore.Mvc.Rendering
+@model SamorodinkaTech.FormStructures.Web.Pages.Forms.PendingModel
+@{
+    ViewData["Title"] = $"Pending mapping · {Model.FormNumber}";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        <h1 class="h4 mb-0">Pending column mapping</h1>
+        <div class="text-muted"><small>#@Model.FormNumber · pending <code>@Model.PendingId</code></small></div>
+        @if (Model.IntendedVersion > 0)
+        {
+            <div class="text-muted"><small>Will create schema version: <code>v@(Model.IntendedVersion)</code></small></div>
+        }
+        <div class="text-muted"><small>Map from: <code>v@(Model.MapFromVersion)</code></small></div>
+    </div>
+    <div class="d-flex gap-2">
+        <a class="btn btn-outline-secondary btn-sm" href="/settings/forms">Back to uploads</a>
+        <form method="post" asp-page-handler="Cancel" onsubmit="return confirm('Cancel this pending upload?');">
+            <input type="hidden" name="formNumber" value="@Model.FormNumber" />
+            <input type="hidden" name="pendingId" value="@Model.PendingId" />
+            <button type="submit" class="btn btn-outline-danger btn-sm">Cancel</button>
+        </form>
+    </div>
+</div>
+
+<hr />
+
+<div class="text-danger" asp-validation-summary="All"></div>
+
+@if (Model.MappingWarning is string warning)
+{
+    <div class="alert alert-warning">@warning</div>
+}
+
+@if (Model.PendingUpload is null)
+{
+    <div class="alert alert-warning">Pending upload not found.</div>
+}
+else if (Model.PreviousStructure is null)
+{
+    <div class="alert alert-warning">Previous schema is not available; mapping cannot be completed.</div>
+}
+else
+{
+    <div class="alert alert-info">
+        New schema version will be created only after you click <strong>Save mapping</strong>.
+    </div>
+
+    @if (Model.PendingReferenceBooks.Count > 0)
+    {
+        <div class="alert alert-secondary">
+            <div class="d-flex align-items-center justify-content-between">
+                <div>
+                    <strong>Reference books</strong>
+                    <span class="text-muted">(found: @Model.PendingReferenceBooks.Count)</span>
+                </div>
+                <a class="btn btn-outline-secondary btn-sm" href="/Directories">Open list</a>
+            </div>
+            <div class="small text-muted mt-1">
+                Reference books are extracted from Excel Data Validation (List) pointing to a range.
+            </div>
+        </div>
+
+        <div class="table-responsive mb-3">
+            <table class="table table-sm table-striped align-middle">
+                <thead>
+                    <tr>
+                        <th>Reference book</th>
+                        <th>Source</th>
+                        <th class="text-end" style="width: 120px;">Values</th>
+                        <th style="width: 45%;">Example</th>
+                    </tr>
+                </thead>
+                <tbody>
+                @foreach (var b in Model.PendingReferenceBooks)
+                {
+                    var source = !string.IsNullOrWhiteSpace(b.SourceSheet) && !string.IsNullOrWhiteSpace(b.SourceRange)
+                        ? $"{b.SourceSheet}!{b.SourceRange}"
+                        : b.SourceFormula;
+                    var preview = string.Join(", ", b.Values.Take(5));
+                    <tr>
+                        <td>
+                            <a asp-page="/Directories/PendingDetails"
+                               asp-route-formNumber="@Model.FormNumber"
+                               asp-route-pendingId="@Model.PendingId"
+                               asp-route-id="@b.Id">@b.Title</a>
+                        </td>
+                        <td>
+                            <div>@source</div>
+                            <div class="text-muted small">Applied to: @b.AppliedTo.Count</div>
+                        </td>
+                        <td class="text-end">@b.Values.Count</td>
+                        <td class="text-muted small">@preview@if (b.Values.Count > 5) { <text>…</text> }</td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+    }
+
+    <form method="post" asp-page-handler="SaveMapping">
+        <input type="hidden" name="formNumber" value="@Model.FormNumber" />
+        <input type="hidden" name="pendingId" value="@Model.PendingId" />
+        <input type="hidden" name="mapFrom" value="@Model.MapFromVersion" />
+
+        <div class="table-responsive">
+            <table class="table table-sm">
+                <thead>
+                <tr>
+                    <th>New column</th>
+                    <th>Map from (v@Model.MapFromVersion)</th>
+                    <th>Type (if unmapped)</th>
+                </tr>
+                </thead>
+                <tbody>
+                @for (var i = 0; i < Model.MapEdits.Count; i++)
+                {
+                    var newPath = Model.MapEdits[i].NewPath;
+                    var newCol = Model.PendingUpload.Structure.Columns.FirstOrDefault(c => string.Equals(c.Path, newPath, StringComparison.Ordinal));
+                    var newLeafName = newPath;
+                    var newLeafSep = newPath.LastIndexOf(" / ", StringComparison.Ordinal);
+                    if (newLeafSep >= 0 && newLeafSep + 3 < newPath.Length)
+                    {
+                        newLeafName = newPath.Substring(newLeafSep + 3);
+                    }
+                    var groupPath = string.Empty;
+                    var groupSep = newPath.LastIndexOf(" / ", StringComparison.Ordinal);
+                    if (groupSep > 0)
+                    {
+                        groupPath = newPath.Substring(0, groupSep);
+                    }
+
+                    <tr>
+                        <td>
+                            <div>@(!string.IsNullOrWhiteSpace(newCol?.Name) ? newCol!.Name : newLeafName)</div>
+                            <div class="text-muted">
+                                <small>
+                                    @if (!string.IsNullOrWhiteSpace(newCol?.ColumnNumber))
+                                    {
+                                        <text>No. <code>@newCol.ColumnNumber</code></text>
+                                    }
+                                    @if (!string.IsNullOrWhiteSpace(groupPath))
+                                    {
+                                        <text> · @groupPath</text>
+                                    }
+                                </small>
+                            </div>
+                            <input type="hidden" asp-for="MapEdits[i].NewPath" />
+                        </td>
+                        <td>
+                            <select class="form-select form-select-sm" asp-for="MapEdits[i].FromPath">
+                                <option value="">(none)</option>
+                                @foreach (var oldCol in Model.PreviousStructure.Columns.OrderBy(c => c.Index))
+                                {
+                                    var oldLeafName = oldCol.Path;
+                                    var oldLeafSep = oldCol.Path.LastIndexOf(" / ", StringComparison.Ordinal);
+                                    if (oldLeafSep >= 0 && oldLeafSep + 3 < oldCol.Path.Length)
+                                    {
+                                        oldLeafName = oldCol.Path.Substring(oldLeafSep + 3);
+                                    }
+                                    var oldGroupPath = string.Empty;
+                                    var oldGroupSep = oldCol.Path.LastIndexOf(" / ", StringComparison.Ordinal);
+                                    if (oldGroupSep > 0)
+                                    {
+                                        oldGroupPath = oldCol.Path.Substring(0, oldGroupSep);
+                                    }
+
+                                    var oldName = !string.IsNullOrWhiteSpace(oldCol.Name) ? oldCol.Name : oldLeafName;
+
+                                    if (!string.IsNullOrWhiteSpace(oldCol.ColumnNumber))
+                                    {
+                                        <option value="@oldCol.Path">No. @oldCol.ColumnNumber · @oldName@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
+                                    }
+                                    else
+                                    {
+                                        <option value="@oldCol.Path">@oldName@if (!string.IsNullOrWhiteSpace(oldGroupPath)) { <text> (@oldGroupPath)</text> }</option>
+                                    }
+                                }
+                            </select>
+                        </td>
+                        <td>
+                            <select class="form-select form-select-sm" asp-for="MapEdits[i].Type" asp-items="Html.GetEnumSelectList<SamorodinkaTech.FormStructures.Web.Models.ColumnType>()"></select>
+                        </td>
+                    </tr>
+                }
+                </tbody>
+            </table>
+        </div>
+
+        <div class="d-flex justify-content-end gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">Save mapping</button>
+        </div>
+    </form>
+}
+
+@section Scripts {
+    <partial name="_ValidationScriptsPartial" />
+}

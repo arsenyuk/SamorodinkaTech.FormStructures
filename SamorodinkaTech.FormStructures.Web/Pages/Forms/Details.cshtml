@@ -1,0 +1,431 @@
+@page "/forms/{formNumber}"
+@using Microsoft.AspNetCore.Html
+@using Microsoft.AspNetCore.Mvc.Rendering
+@model SamorodinkaTech.FormStructures.Web.Pages.Forms.DetailsModel
+@{
+    ViewData["Title"] = "Form";
+}
+
+<div class="d-flex align-items-center justify-content-between">
+    <div>
+        <h1 class="h4 mb-0">@Model.DisplayFormTitle</h1>
+        <div class="text-muted"><small>Form number: <code>@Model.DisplayFormNumber</code></small></div>
+        <div class="text-muted"><small>Index (URL): <code>@Model.FormNumber</code> (read-only)</small></div>
+        <div class="text-muted"><small>Latest: <code>v@(Model.Latest!.Version)</code> · Uploaded (UTC): <code>@Model.Latest!.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></small></div>
+    </div>
+    <div>
+        <div class="d-flex gap-2">
+            @if (!Model.EditMeta)
+            {
+                <a class="btn btn-outline-secondary btn-sm" href="?editMeta=true">Edit form info</a>
+            }
+            <a class="btn btn-outline-secondary btn-sm" href="/">Back</a>
+        </div>
+    </div>
+</div>
+
+<hr />
+
+@{
+    var metaMsg = TempData["MetaMessage"] as string;
+    var uploadMsg = TempData["UploadMessage"] as string;
+    var deleteMsg = TempData["DeleteMessage"] as string;
+
+    var allMsgs = new List<string>();
+    if (!string.IsNullOrWhiteSpace(uploadMsg)) allMsgs.Add(uploadMsg!);
+    if (!string.IsNullOrWhiteSpace(metaMsg)) allMsgs.Add(metaMsg!);
+    if (!string.IsNullOrWhiteSpace(deleteMsg)) allMsgs.Add(deleteMsg!);
+
+    var primaryMsg = allMsgs.Count > 0 ? allMsgs[0] : null;
+}
+
+@if (!string.IsNullOrWhiteSpace(primaryMsg))
+{
+    <div class="alert alert-success alert-dismissible fade show" role="alert">
+        @primaryMsg
+        @if (allMsgs.Count > 1)
+        {
+            <details class="mt-2">
+                <summary class="text-muted"><small>Also: @((allMsgs.Count - 1)) more</small></summary>
+                <ul class="mb-0">
+                    @for (var i = 1; i < allMsgs.Count; i++)
+                    {
+                        <li><small>@allMsgs[i]</small></li>
+                    }
+                </ul>
+            </details>
+        }
+        <button type="button" class="btn-close" data-bs-dismiss="alert" aria-label="Close"></button>
+    </div>
+}
+
+@if (Model.EditMeta)
+{
+    <div class="card mb-3">
+        <div class="card-body">
+            <h2 class="h6">Form info</h2>
+            <form method="post" asp-page-handler="SaveMeta" asp-route-formNumber="@Model.FormNumber">
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <label class="form-label" for="DisplayFormNumberEdit">Form number (display)</label>
+                        <input class="form-control" asp-for="DisplayFormNumberEdit" />
+                        <span class="text-danger" asp-validation-for="DisplayFormNumberEdit"></span>
+                    </div>
+                    <div class="col-md-9">
+                        <label class="form-label" for="DisplayFormTitleEdit">Form title</label>
+                        <input class="form-control" asp-for="DisplayFormTitleEdit" />
+                        <span class="text-danger" asp-validation-for="DisplayFormTitleEdit"></span>
+                    </div>
+                </div>
+
+                <div class="form-text mt-2">Index (URL) is not editable: <code>@Model.FormNumber</code></div>
+
+                <div class="mt-3 d-flex justify-content-between">
+                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+}
+
+
+
+<div class="row g-3">
+    <div class="col-12">
+        <ul class="nav nav-tabs" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-overview" type="button" role="tab">Overview</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-versions" type="button" role="tab">Versions</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-schema" type="button" role="tab">Schema</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-uploads" type="button" role="tab">Uploads</button>
+            </li>
+        </ul>
+
+        <div class="tab-content pt-3">
+            <div class="tab-pane fade show active" id="tab-overview" role="tabpanel">
+                <div class="row g-3">
+                    <div class="col-lg-4">
+                        <div class="card">
+                            <div class="card-body">
+                                <div class="d-flex justify-content-between align-items-center">
+                                    <h2 class="h6 mb-0">Latest schema</h2>
+                                    <a class="btn btn-primary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(Model.Latest!.Version)">Open v@(Model.Latest!.Version)</a>
+                                </div>
+                                <div class="text-muted mt-2">
+                                    <small>Uploaded (UTC): <code>@Model.Latest!.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></small>
+                                </div>
+                                <div class="text-muted"><small>Columns: <code>@Model.Latest!.Columns.Count</code></small></div>
+                                <div class="text-muted"><small>Hash: <code>@Model.Latest!.StructureHash</code></small></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-lg-4">
+                        <div class="card">
+                            <div class="card-body">
+                                <h2 class="h6">Data</h2>
+                                <div class="text-muted"><small>Latest uploads: <code>@Model.LatestUploads.Count</code></small></div>
+                                <div class="mt-3 d-flex gap-2">
+                                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/aggregated">Aggregated</a>
+                                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">All uploads</a>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="col-lg-4">
+                        <div class="card">
+                            <div class="card-body">
+                                <h2 class="h6">Actions</h2>
+                                <div class="d-flex flex-wrap gap-2">
+                                    <a class="btn btn-outline-secondary btn-sm" href="?editMeta=true">Edit form info</a>
+                                    <form method="post"
+                                          asp-page-handler="DeleteForm"
+                                          asp-route-formNumber="@Model.FormNumber"
+                                          onsubmit="return confirm('Delete the whole form, all schema versions, and all uploaded data?');">
+                                        <button type="submit" class="btn btn-outline-danger btn-sm">Delete form</button>
+                                    </form>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="accordion mt-3" id="overviewAccordion">
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="headingUpload">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseUpload">Upload new schema version</button>
+                        </h2>
+                        <div id="collapseUpload" class="accordion-collapse collapse" data-bs-parent="#overviewAccordion">
+                            <div class="accordion-body">
+                                <form method="post" enctype="multipart/form-data" asp-page-handler="UploadSchema" asp-route-formNumber="@Model.FormNumber">
+                                    <div class="mb-2">
+                                        <input class="form-control" type="file" asp-for="SchemaUpload" accept=".xlsx" />
+                                        <div class="form-text">Upload an empty template (.xlsx) to create a new schema version.</div>
+                                        <div class="form-text">Note: the form number inside the Excel file may be different; the schema will still be saved under this index (URL): <code>@Model.FormNumber</code>.</div>
+                                        <span class="text-danger" asp-validation-for="SchemaUpload"></span>
+                                    </div>
+                                    <div class="text-danger" asp-validation-summary="All"></div>
+                                    <button class="btn btn-primary btn-sm" type="submit">Upload & Analyze</button>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-pane fade" id="tab-versions" role="tabpanel">
+                @if (Model.VersionSummaries.Count == 0)
+                {
+                    <div class="text-muted">No versions.</div>
+                }
+                else
+                {
+                    <table class="table table-sm align-middle">
+                        <thead>
+                        <tr>
+                            <th>Version</th>
+                            <th>Uploaded (UTC)</th>
+                            <th>Columns</th>
+                            <th>Title (from file)</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var v in Model.VersionSummaries)
+                        {
+                            var isLatest = Model.Latest is not null && v.Version == Model.Latest.Version;
+                            <tr>
+                                <td class="@(isLatest ? "fw-semibold" : string.Empty)">
+                                    <a href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(v.Version)"><code>v@(v.Version)</code></a>
+                                    @if (isLatest)
+                                    {
+                                        <span class="badge text-bg-primary ms-2">latest</span>
+                                    }
+                                </td>
+                                <td><code>@v.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                                <td><code>@v.ColumnsCount</code></td>
+                                <td class="text-muted"><small>@v.FormTitle</small></td>
+                                <td class="text-end">
+                                    <div class="btn-group">
+                                        <a class="btn btn-primary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(v.Version)">Open</a>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button>
+                                        <ul class="dropdown-menu dropdown-menu-end">
+                                            <li><a class="dropdown-item" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/v@(v.Version)?editTypes=true#types">Edit types</a></li>
+                                            <li><a class="dropdown-item" href="?handler=Download&formNumber=@Uri.EscapeDataString(Model.FormNumber)&version=@(v.Version)">Download .xlsx</a></li>
+                                            <li><a class="dropdown-item" href="?handler=Structure&formNumber=@Uri.EscapeDataString(Model.FormNumber)&version=@(v.Version)" target="_blank">Open JSON</a></li>
+                                            <li><hr class="dropdown-divider" /></li>
+                                            <li>
+                                                <form method="post"
+                                                      asp-page-handler="DeleteVersion"
+                                                      asp-route-formNumber="@Model.FormNumber"
+                                                      asp-route-version="@(v.Version)"
+                                                      onsubmit="return confirm('Delete this schema version and all uploaded data for it?');">
+                                                    <button type="submit" class="dropdown-item text-danger">Delete version</button>
+                                                </form>
+                                            </li>
+                                        </ul>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+            </div>
+
+            <div class="tab-pane fade" id="tab-schema" role="tabpanel">
+                <div class="accordion" id="schemaAccordion">
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="headingHeader">
+                            <button class="accordion-button" type="button" data-bs-toggle="collapse" data-bs-target="#collapseHeader">Header structure</button>
+                        </h2>
+                        <div id="collapseHeader" class="accordion-collapse collapse show" data-bs-parent="#schemaAccordion">
+                            <div class="accordion-body">
+                                @if (Model.Latest!.Header.Count == 0)
+                                {
+                                    <div class="text-muted">No header nodes.</div>
+                                }
+                                else
+                                {
+                                    @RenderNodes(Model.Latest!.Header)
+                                }
+                            </div>
+                        </div>
+                    </div>
+                    <div class="accordion-item">
+                        <h2 class="accordion-header" id="headingColumns">
+                            <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#collapseColumns">Columns</button>
+                        </h2>
+                        <div id="collapseColumns" class="accordion-collapse collapse" data-bs-parent="#schemaAccordion">
+                            <div class="accordion-body">
+                                <div class="table-responsive">
+                                    <table class="table table-sm mb-0">
+                                        <thead>
+                                        <tr>
+                                            <th class="text-end">#</th>
+                                            <th class="text-end">№</th>
+                                            <th>Name</th>
+                                            <th>Group</th>
+                                        </tr>
+                                        </thead>
+                                        <tbody>
+                                        @foreach (var c in Model.Latest!.Columns)
+                                        {
+                                            var groupPath = string.Empty;
+                                            var groupSep = c.Path.LastIndexOf(" / ", StringComparison.Ordinal);
+                                            if (groupSep > 0)
+                                            {
+                                                groupPath = c.Path.Substring(0, groupSep);
+                                            }
+
+                                            <tr>
+                                                <td class="text-end"><code>@c.Index</code></td>
+                                                <td class="text-end">@if (!string.IsNullOrWhiteSpace(c.ColumnNumber)) { <code>@c.ColumnNumber</code> }</td>
+                                                <td>
+                                                    <div>@c.Name</div>
+                                                    @if (Model.LoadedFormulasByPath.TryGetValue(c.Path, out var formulaInfo)
+                                                         && !string.IsNullOrWhiteSpace(formulaInfo.Formula))
+                                                    {
+                                                        <div class="text-muted"><small>
+                                                            Schema formula:
+                                                            <code class="ms-1 d-inline-block text-truncate" style="max-width: 28rem; vertical-align: bottom;" title="@formulaInfo.Formula">@formulaInfo.Formula</code>
+                                                        </small></div>
+                                                    }
+                                                </td>
+                                                <td class="text-muted"><small>@groupPath</small></td>
+                                            </tr>
+                                        }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="tab-pane fade" id="tab-uploads" role="tabpanel">
+                <div class="d-flex gap-2 mb-3">
+                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data/aggregated">Aggregated</a>
+                    <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">All uploads</a>
+                </div>
+
+                @if (Model.LatestUploads.Count == 0)
+                {
+                    <div class="text-muted">No uploads for latest version.</div>
+                }
+                else
+                {
+                    <table class="table table-sm align-middle">
+                        <thead>
+                        <tr>
+                            <th>Uploaded (UTC)</th>
+                            <th>Rows</th>
+                            <th>Original file</th>
+                            <th class="text-end">Actions</th>
+                        </tr>
+                        </thead>
+                        <tbody>
+                        @foreach (var u in Model.LatestUploads)
+                        {
+                            var dataHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{u.FormVersion}/{Uri.EscapeDataString(u.UploadId)}";
+                            var fileHref = $"/forms/{Uri.EscapeDataString(Model.FormNumber)}/data/v{u.FormVersion}/{Uri.EscapeDataString(u.UploadId)}/file";
+                            var downloadHref = $"?handler=DownloadData&formNumber={Uri.EscapeDataString(Model.FormNumber)}&version={u.FormVersion}&uploadId={Uri.EscapeDataString(u.UploadId)}";
+                            var jsonHref = $"?handler=DataJson&formNumber={Uri.EscapeDataString(Model.FormNumber)}&version={u.FormVersion}&uploadId={Uri.EscapeDataString(u.UploadId)}";
+
+                            <tr>
+                                <td><code>@u.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss")</code></td>
+                                <td><code>@u.RowCount</code></td>
+                                <td class="text-muted"><small>@u.OriginalFileName</small></td>
+                                <td class="text-end">
+                                    <div class="btn-group">
+                                        <a class="btn btn-outline-primary btn-sm" href="@dataHref">Data</a>
+                                        <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle dropdown-toggle-split" data-bs-toggle="dropdown"></button>
+                                        <ul class="dropdown-menu dropdown-menu-end">
+                                            <li><a class="dropdown-item" href="@fileHref">File details</a></li>
+                                            <li><a class="dropdown-item" href="@downloadHref">Download .xlsx</a></li>
+                                            <li><a class="dropdown-item" href="@jsonHref" target="_blank">Open JSON</a></li>
+                                        </ul>
+                                    </div>
+                                </td>
+                            </tr>
+                        }
+                        </tbody>
+                    </table>
+                }
+            </div>
+        </div>
+    </div>
+</div>
+
+@functions {
+    private IHtmlContent RenderNodes(IReadOnlyList<SamorodinkaTech.FormStructures.Web.Models.HeaderNode> nodes)
+    {
+        var ul = new TagBuilder("ul");
+        ul.AddCssClass("mb-0");
+
+        foreach (var n in nodes.OrderBy(x => x.ColStart).ThenBy(x => x.RowStart))
+        {
+            var li = new TagBuilder("li");
+
+            var label = new TagBuilder("span");
+            label.InnerHtml.Append(n.Label);
+
+            var meta = new TagBuilder("span");
+            meta.AddCssClass("text-muted");
+            meta.AddCssClass("ms-2");
+            meta.InnerHtml.Append($"(r{n.RowStart}, c{n.ColStart})");
+
+            li.InnerHtml.AppendHtml(label);
+            li.InnerHtml.AppendHtml(meta);
+
+            if (n.Children.Count > 0)
+            {
+                li.InnerHtml.AppendHtml(RenderNodes(n.Children));
+            }
+
+            ul.InnerHtml.AppendHtml(li);
+        }
+
+        return ul;
+    }
+}
+
+@section Scripts {
+    <script>
+        (function () {
+            function activateFromHash() {
+                var hash = window.location.hash;
+                if (!hash) return;
+
+                var btn = document.querySelector('button[data-bs-toggle="tab"][data-bs-target="' + hash + '"]');
+                if (!btn) return;
+
+                if (window.bootstrap && window.bootstrap.Tab) {
+                    var tab = new window.bootstrap.Tab(btn);
+                    tab.show();
+                } else {
+                    btn.click();
+                }
+            }
+
+            document.addEventListener('shown.bs.tab', function (e) {
+                var target = e.target && e.target.getAttribute && e.target.getAttribute('data-bs-target');
+                if (target && target.startsWith('#')) {
+                    history.replaceState(null, '', target);
+                }
+            });
+
+            window.addEventListener('hashchange', activateFromHash);
+            activateFromHash();
+        })();
+    </script>
+}
