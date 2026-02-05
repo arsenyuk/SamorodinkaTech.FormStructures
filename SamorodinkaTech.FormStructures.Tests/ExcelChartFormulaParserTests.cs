@@ -47,6 +47,14 @@ public sealed class ExcelChartFormulaParserTests
             { "=SUM(RC[-1]:RC[-3])", 4, 4, ChartAggregationKind.Sum, new[] { 1, 2, 3 } },
         };
 
+    public static TheoryData<string, int, int, int, int[], string> DifferenceFormulas
+        => new()
+        {
+            // X (origin) = Y - Z; title comes from Y, pie parts are X and Z.
+            { "=A4-B4", 3, 4, 1, new[] { 3, 2 }, "A1" },
+            { "=RC[-2]-RC[-1]", 3, 4, 1, new[] { 3, 2 }, "R1C1" },
+        };
+
     [Theory]
     [MemberData(nameof(ChartableFormulas))]
     public void TryParse_RecognizesChartableFormulas_AndExtractsColumns(
@@ -71,6 +79,22 @@ public sealed class ExcelChartFormulaParserTests
         Assert.True(ExcelChartFormulaParser.TryParse(formula, originCol, originRow, out var info));
         Assert.Equal(expectedKind, info.Kind);
         Assert.Equal(expectedColumns, info.Columns);
+    }
+
+    [Theory]
+    [MemberData(nameof(DifferenceFormulas))]
+    public void TryParse_Difference_XEqualsYMinusZ_UsesYAsTitle_AndXAndZAsParts(
+        string formula,
+        int originCol,
+        int originRow,
+        int expectedTitleCol,
+        int[] expectedPartCols,
+        string caseName)
+    {
+        Assert.True(ExcelChartFormulaParser.TryParse(formula, originCol, originRow, out var info), caseName);
+        Assert.Equal(ChartAggregationKind.Difference, info.Kind);
+        Assert.Equal(expectedTitleCol, info.TitleColumn);
+        Assert.Equal(expectedPartCols, info.Columns);
     }
 
     [Theory]
@@ -100,6 +124,29 @@ public sealed class ExcelChartFormulaParserTests
         Assert.True(ExcelChartFormulaParser.TryParse(normalized, out var info));
         Assert.Equal(expectedKind, info.Kind);
         Assert.Equal(new[] { 1, 2, 3 }, info.Columns);
+    }
+
+    [Fact]
+    public void FixtureExample_WithDataAndDifferenceFormula_IsRecognized_WithTitleAndParts()
+    {
+        using var stream = LoadXlsxFromBase64Fixture("DIFF-001-Y-MINUS-Z");
+        using var wb = new XLWorkbook(stream);
+        var ws = wb.Worksheets.First();
+
+        // Headers are row 3; data is row 4.
+        Assert.Equal(100, ws.Cell(4, 1).GetValue<int>()); // Y
+        Assert.Equal(30, ws.Cell(4, 2).GetValue<int>());  // Z
+
+        var cellX = ws.Cell(4, 3);
+        Assert.True(cellX.HasFormula);
+
+        var raw = (cellX.FormulaA1 ?? string.Empty).Trim();
+        var normalized = raw.StartsWith('=') ? raw : "=" + raw;
+
+        Assert.True(ExcelChartFormulaParser.TryParse(normalized, originColumn: 3, originRow: 4, out var info));
+        Assert.Equal(ChartAggregationKind.Difference, info.Kind);
+        Assert.Equal(1, info.TitleColumn);
+        Assert.Equal(new[] { 3, 2 }, info.Columns);
     }
 
     [Theory]

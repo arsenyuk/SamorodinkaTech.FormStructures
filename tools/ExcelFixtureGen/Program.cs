@@ -20,6 +20,7 @@ static IReadOnlyList<string> ListFixtures() => new[]
     "AVG-003-SUM-DIV",
     "AVG-004-PLUS-DIV",
     "AVG-005-RU",
+    "DIFF-001-Y-MINUS-Z",
     "TYPES-FORMAT-001",
     "TYPES-NOFORMAT-001",
 };
@@ -37,10 +38,34 @@ static byte[] BuildFixture(string name)
         "AVG-003-SUM-DIV" => BuildAvg003SumDiv(),
         "AVG-004-PLUS-DIV" => BuildAvg004PlusDiv(),
         "AVG-005-RU" => BuildAvg005Ru(),
+        "DIFF-001-Y-MINUS-Z" => BuildDiff001YMinusZ(),
         "TYPES-FORMAT-001" => BuildTypesFormat001(),
         "TYPES-NOFORMAT-001" => BuildTypesNoFormat001(),
         _ => throw new ArgumentException($"Unknown fixture: {name}")
     };
+}
+
+static byte[] BuildDiff001YMinusZ()
+{
+    using var wb = new XLWorkbook();
+
+    var ws = wb.AddWorksheet("Form");
+    ws.Cell(1, 1).Value = "DIFF-001";
+    ws.Cell(2, 1).Value = "Difference: X = Y - Z (title from Y; parts X and Z)";
+
+    // 1-row header (row 3), 3 leaf columns.
+    ws.Cell(3, 1).Value = "Y";
+    ws.Cell(3, 2).Value = "Z";
+    ws.Cell(3, 3).Value = "X";
+
+    // Data starts at row 4.
+    ws.Cell(4, 1).Value = 100;
+    ws.Cell(4, 2).Value = 30;
+    ws.Cell(4, 3).FormulaA1 = "A4-B4";
+
+    using var ms = new MemoryStream();
+    wb.SaveAs(ms);
+    return ms.ToArray();
 }
 
 static byte[] BuildAvgBase(string formNumber, string title, string formulaA1)

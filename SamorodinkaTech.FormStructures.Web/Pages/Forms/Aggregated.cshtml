@@ -276,13 +276,28 @@ else
                                 @v
                                 @if (Model.ChartableFormulasByPath.TryGetValue(col.Path, out var chartInfo))
                                 {
-                                    var kindToken = chartInfo.Kind == SamorodinkaTech.FormStructures.Web.Services.ChartAggregationKind.Average ? "avg" : "sum";
+                                    var kindToken = chartInfo.Kind switch
+                                    {
+                                        SamorodinkaTech.FormStructures.Web.Services.ChartAggregationKind.Average => "avg",
+                                        SamorodinkaTech.FormStructures.Web.Services.ChartAggregationKind.Difference => "diff",
+                                        _ => "sum",
+                                    };
                                     var colsToken = string.Join(",", chartInfo.Columns);
+
+                                    var totalName = col.Name;
+                                    if (chartInfo.TitleColumn is int titleExcelCol && Model.Structure is not null)
+                                    {
+                                        var titleCol = Model.Structure.Columns.FirstOrDefault(c => c.ExcelLeafColumn == titleExcelCol);
+                                        if (titleCol is not null && !string.IsNullOrWhiteSpace(titleCol.Name))
+                                        {
+                                            totalName = titleCol.Name;
+                                        }
+                                    }
                                     <button type="button"
                                             class="btn btn-outline-secondary btn-sm py-0 px-1 js-sum-pie"
                                             data-kind="@kindToken"
                                             data-cols="@colsToken"
-                                            data-total-name="@col.Name">
+                                            data-total-name="@totalName">
                                         Pie
                                     </button>
                                 }

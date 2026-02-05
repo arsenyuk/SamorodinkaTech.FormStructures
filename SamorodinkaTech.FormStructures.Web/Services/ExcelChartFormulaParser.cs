@@ -7,9 +7,10 @@ public enum ChartAggregationKind
 {
     Sum = 0,
     Average = 1,
+    Difference = 2,
 }
 
-public sealed record ChartFormulaInfo(ChartAggregationKind Kind, IReadOnlyList<int> Columns);
+public sealed record ChartFormulaInfo(ChartAggregationKind Kind, IReadOnlyList<int> Columns, int? TitleColumn = null);
 
 public static class ExcelChartFormulaParser
 {
@@ -37,6 +38,18 @@ public static class ExcelChartFormulaParser
 
     private static readonly Regex ConstantDivisorRegex = new(
         @"/\s*(\d+)(?![A-Z0-9_])",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex A1CellRefWithRowColRegex = new(
+        @"(?:(?:'[^']+'|[A-Z0-9_\.]+)!)?\$?(?<col>[A-Z]{1,3})\$?(?<row>\d+)",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex A1DifferenceRegex = new(
+        @"^\s*=\s*(?<y>(?:(?:'[^']+'|[A-Z0-9_\.]+)!)?\$?[A-Z]{1,3}\$?\d+)\s*-\s*(?<z>(?:(?:'[^']+'|[A-Z0-9_\.]+)!)?\$?[A-Z]{1,3}\$?\d+)\s*$",
+        RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
+
+    private static readonly Regex R1C1DifferenceRegex = new(
+        @"^\s*=\s*(?<y>(?:(?:'[^']+'|[A-Z0-9_\.]+)!)?(?:R(?:\[?-?\d*\]?))?(?:C(?:\[?-?\d+\]?)))\s*-\s*(?<z>(?:(?:'[^']+'|[A-Z0-9_\.]+)!)?(?:R(?:\[?-?\d*\]?))?(?:C(?:\[?-?\d+\]?)))\s*$",
         RegexOptions.Compiled | RegexOptions.CultureInvariant | RegexOptions.IgnoreCase);
 
     // R1C1 refs: R4C2, R[0]C[-1], RC[-1], R[-1]C, etc.
@@ -106,6 +119,16 @@ public static class ExcelChartFormulaParser
             return false;
         }
 
+        if (TryParseDifferenceA1(f, originColumn, originRow, out info))
+        {
+            return true;
+        }
+
+        if (TryParseDifferenceR1C1(f, originColumn, originRow, out info))
+        {
+            return true;
+        }
+
         var columns = ExtractReferencedColumnsR1C1(f, originColumn, originRow);
         if (columns.Count < 2)
         {
@@ -119,6 +142,131 @@ public static class ExcelChartFormulaParser
         }
 
         info = new ChartFormulaInfo(kind.Value, columns);
+        return true;
+    }
+
+    private static bool TryParseDifferenceA1(string formula, int originColumn, int originRow, out ChartFormulaInfo info)
+    {
+        info = new ChartFormulaInfo(ChartAggregationKind.Difference, Array.Empty<int>());
+
+        var m = A1DifferenceRegex.Match(formula);
+        if (!m.Success)
+        {
+            return false;
+        }
+
+        if (!TryParseA1CellRef(m.Groups["y"].Value, out var yCol, out var yRow))
+        {
+            return false;
+        }
+        if (!TryParseA1CellRef(m.Groups["z"].Value, out var zCol, out var zRow))
+        {
+            return false;
+        }
+
+        if (yRow != originRow || zRow != originRow)
+        {
+            return false;
+        }
+
+        if (originColumn == zCol)
+        {
+            return false;
+        }
+
+        info = new ChartFormulaInfo(
+            ChartAggregationKind.Difference,
+            new[] { originColumn, zCol },
+            TitleColumn: yCol);
+        return true;
+    }
+
+    private static bool TryParseDifferenceR1C1(string formula, int originColumn, int originRow, out ChartFormulaInfo info)
+    {
+        info = new ChartFormulaInfo(ChartAggregationKind.Difference, Array.Empty<int>());
+
+        var m = R1C1DifferenceRegex.Match(formula);
+        if (!m.Success)
+        {
+            return false;
+        }
+
+        var y = m.Groups["y"].Value;
+        var z = m.Groups["z"].Value;
+
+        if (!TryParseR1C1CellRef(y, originColumn, originRow, out var yResolved))
+        {
+            return false;
+        }
+        if (!TryParseR1C1CellRef(z, originColumn, originRow, out var zResolved))
+        {
+            return false;
+        }
+
+        if (yResolved.Row != originRow || zResolved.Row != originRow)
+        {
+            return false;
+        }
+
+        if (originColumn == zResolved.Col)
+        {
+            return false;
+        }
+
+        info = new ChartFormulaInfo(
+            ChartAggregationKind.Difference,
+            new[] { originColumn, zResolved.Col },
+            TitleColumn: yResolved.Col);
+        return true;
+    }
+
+    private static bool TryParseA1CellRef(string token, out int col, out int row)
+    {
+        col = 0;
+        row = 0;
+
+        var m = A1CellRefWithRowColRegex.Match(token ?? string.Empty);
+        if (!m.Success)
+        {
+            return false;
+        }
+
+        var colLetters = m.Groups["col"].Value;
+        var rowText = m.Groups["row"].Value;
+        if (!int.TryParse(rowText, NumberStyles.Integer, CultureInfo.InvariantCulture, out row) || row <= 0)
+        {
+            return false;
+        }
+
+        var c = ColumnLettersToNumber(colLetters);
+        if (c is null || c.Value <= 0)
+        {
+            return false;
+        }
+
+        col = c.Value;
+        return true;
+    }
+
+    private static bool TryParseR1C1CellRef(string token, int originColumn, int originRow, out (int Row, int Col) resolved)
+    {
+        resolved = default;
+
+        var m = R1C1CellRegex.Match(token ?? string.Empty);
+        if (!m.Success)
+        {
+            return false;
+        }
+
+        var r = m.Groups[1].Value;
+        var c = m.Groups[2].Value;
+        var rc = TryResolveR1C1(r, c, originColumn, originRow);
+        if (rc is null)
+        {
+            return false;
+        }
+
+        resolved = rc.Value;
         return true;
     }
 
