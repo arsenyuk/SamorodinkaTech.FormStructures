@@ -37,6 +37,7 @@
     </div>
     <div class="d-flex gap-2">
         <a class="btn btn-outline-primary btn-sm" href="?handler=Xlsx&version=@Model.Version&sort=@Uri.EscapeDataString(Model.SortKey)&dir=@Uri.EscapeDataString(Model.SortDir)@Model.SelectedColsQuery@Model.ReferenceBookQuery">Download .xlsx</a>
+        <a class="btn btn-outline-primary btn-sm" href="?handler=Csv&version=@Model.Version&sort=@Uri.EscapeDataString(Model.SortKey)&dir=@Uri.EscapeDataString(Model.SortDir)@Model.SelectedColsQuery@Model.ReferenceBookQuery">Download .csv</a>
         <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)/data">Uploads</a>
         <a class="btn btn-outline-secondary btn-sm" href="/forms/@Uri.EscapeDataString(Model.FormNumber)">Schema</a>
     </div>

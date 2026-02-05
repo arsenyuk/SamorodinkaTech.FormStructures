@@ -27,6 +27,12 @@ public static class DownloadFileName
         return $"{baseName}-v{version}-aggregated.xlsx";
     }
 
+    public static string ForAggregatedCsv(FormStructure structure, int version)
+    {
+        var baseName = ForForm(structure);
+        return $"{baseName}-v{version}-aggregated.csv";
+    }
+
     public static string ForForm(FormStructure structure)
     {
         var safeNumber = ToSafePart(structure.FormNumber, fallback: "form");

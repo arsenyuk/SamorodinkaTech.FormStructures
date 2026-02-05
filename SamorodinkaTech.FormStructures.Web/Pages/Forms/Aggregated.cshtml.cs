@@ -203,6 +203,61 @@ public class AggregatedModel : PageModel
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", downloadName);
     }
 
+    public IActionResult OnGetCsv(
+        string formNumber,
+        int? version = null,
+        string? sort = null,
+        string? dir = null,
+        string[]? cols = null,
+        string[]? rbCol = null,
+        string[]? rbValue = null,
+        string[]? rbMatch = null)
+    {
+        var loadResult = TryLoad(formNumber, version, sort, dir, cols, rbCol, rbValue, rbMatch);
+        if (loadResult is not null)
+        {
+            return loadResult;
+        }
+
+        if (Structure is null)
+        {
+            return NotFound();
+        }
+
+        var headers = new List<string>();
+        if (ShowUploadedColumn) headers.Add("Uploaded (UTC)");
+        if (ShowFileColumn) headers.Add("File");
+        if (ShowUploadIdColumn) headers.Add("UploadId");
+        headers.AddRange(VisibleColumns.Select(GetCsvHeader));
+
+        var dataRows = Rows
+            .Select(r =>
+            {
+                var row = new List<string?>();
+                if (ShowUploadedColumn) row.Add(r.UploadedAtUtc.ToString("yyyy-MM-dd HH:mm:ss"));
+                if (ShowFileColumn) row.Add(r.OriginalFileName);
+                if (ShowUploadIdColumn) row.Add(r.UploadId);
+
+                foreach (var c in VisibleColumns)
+                {
+                    row.Add(r.Values.TryGetValue(c.Path, out var v) ? v : null);
+                }
+
+                return (IReadOnlyList<string?>)row;
+            })
+            .ToArray();
+
+        var bytes = CsvUtil.BuildUtf8CsvWithBom(headers, dataRows, separator: ',');
+        var downloadName = DownloadFileName.ForAggregatedCsv(Structure, Version);
+        return File(bytes, "text/csv; charset=utf-8", downloadName);
+    }
+
+    private static string GetCsvHeader(ColumnDefinition c)
+    {
+        var alias = (c.CsvHeaderAlias ?? string.Empty).Trim();
+        return alias.Length == 0 ? c.Name : alias;
+    }
+
     private IActionResult? TryLoad(
         string formNumber,
         int? version,

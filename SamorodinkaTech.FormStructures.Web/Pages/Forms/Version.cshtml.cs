@@ -23,6 +23,7 @@ public class VersionModel : PageModel
     public FormStructure? Structure { get; private set; }
 
     public bool EditTypes { get; private set; }
+    public bool EditCsvAliases { get; private set; }
     public int? MapFromVersion { get; private set; }
     public FormStructure? PreviousStructure { get; private set; }
 
@@ -30,9 +31,12 @@ public class VersionModel : PageModel
     public List<ColumnTypeEditRow> TypeEdits { get; set; } = new();
 
     [BindProperty]
+    public List<ColumnCsvAliasEditRow> CsvAliasEdits { get; set; } = new();
+
+    [BindProperty]
     public List<ColumnMapEditRow> MapEdits { get; set; } = new();
 
-    public IActionResult OnGet(string formNumber, int version, bool editTypes = false, int? mapFrom = null)
+    public IActionResult OnGet(string formNumber, int version, bool editTypes = false, bool editCsvAliases = false, int? mapFrom = null)
     {
         if (string.IsNullOrWhiteSpace(formNumber) || version <= 0)
         {
@@ -44,6 +48,7 @@ public class VersionModel : PageModel
         Structure = _storage.TryLoadStructure(FormNumber, Version);
 
         EditTypes = editTypes;
+        EditCsvAliases = editCsvAliases;
         MapFromVersion = mapFrom;
 
         if (Structure is null)
@@ -57,6 +62,15 @@ public class VersionModel : PageModel
             {
                 Path = c.Path,
                 Type = c.Type
+            })
+            .ToList();
+
+        CsvAliasEdits = Structure.Columns
+            .OrderBy(c => c.Index)
+            .Select(c => new ColumnCsvAliasEditRow
+            {
+                Path = c.Path,
+                Alias = c.CsvHeaderAlias
             })
             .ToList();
 
@@ -87,6 +101,70 @@ public class VersionModel : PageModel
         return Page();
     }
 
+    public async Task<IActionResult> OnPostSaveCsvAliasesAsync(string formNumber, int version, CancellationToken ct)
+    {
+        if (string.IsNullOrWhiteSpace(formNumber) || version <= 0)
+        {
+            return NotFound();
+        }
+
+        FormNumber = formNumber;
+        Version = version;
+        Structure = _storage.TryLoadStructure(FormNumber, Version);
+        if (Structure is null)
+        {
+            return NotFound();
+        }
+
+        EditCsvAliases = true;
+
+        if (CsvAliasEdits.Count == 0)
+        {
+            ModelState.AddModelError(string.Empty, "No CSV alias edits provided.");
+            CsvAliasEdits = Structure.Columns
+                .OrderBy(c => c.Index)
+                .Select(c => new ColumnCsvAliasEditRow { Path = c.Path, Alias = c.CsvHeaderAlias })
+                .ToList();
+            return Page();
+        }
+
+        var aliasByPath = CsvAliasEdits
+            .Where(x => !string.IsNullOrWhiteSpace(x.Path))
+            .GroupBy(x => x.Path, StringComparer.Ordinal)
+            .ToDictionary(
+                g => g.Key,
+                g =>
+                {
+                    var a = (g.Last().Alias ?? string.Empty).Trim();
+                    return a.Length == 0 ? null : a;
+                },
+                StringComparer.Ordinal);
+
+        var updatedColumns = Structure.Columns
+            .Select(c => aliasByPath.TryGetValue(c.Path, out var a) ? c with { CsvHeaderAlias = a } : c)
+            .ToArray();
+
+        var updated = Structure with { Columns = updatedColumns };
+
+        try
+        {
+            await _storage.SaveStructureAsync(FormNumber, Version, updated, ct);
+            TempData["SaveMessage"] = "CSV headers saved.";
+            return Redirect($"/forms/{Uri.EscapeDataString(FormNumber)}/v{Version}");
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(
+                ex,
+                "Failed to save CSV aliases for {FormNumber} v{Version}. ExceptionChain={ExceptionChain}",
+                FormNumber,
+                Version,
+                ExceptionUtil.FormatExceptionChain(ex));
+            ModelState.AddModelError(string.Empty, $"Failed to save CSV headers. {ExceptionUtil.FormatExceptionChain(ex)}");
+            return Page();
+        }
+    }
+
     public async Task<IActionResult> OnPostSaveTypesAsync(string formNumber, int version, CancellationToken ct)
     {
         if (string.IsNullOrWhiteSpace(formNumber) || version <= 0)
@@ -104,6 +182,10 @@ public class VersionModel : PageModel
 
         // Keep the editor visible when returning Page() from a POST.
         EditTypes = true;
+        CsvAliasEdits = Structure.Columns
+            .OrderBy(c => c.Index)
+            .Select(c => new ColumnCsvAliasEditRow { Path = c.Path, Alias = c.CsvHeaderAlias })
+            .ToList();
 
         if (TypeEdits.Count == 0)
         {
@@ -205,6 +287,11 @@ public class VersionModel : PageModel
                 .OrderBy(c => c.Index)
                 .Select(c => new ColumnTypeEditRow { Path = c.Path, Type = c.Type })
                 .ToList();
+
+            CsvAliasEdits = Structure.Columns
+                .OrderBy(c => c.Index)
+                .Select(c => new ColumnCsvAliasEditRow { Path = c.Path, Alias = c.CsvHeaderAlias })
+                .ToList();
             return Page();
         }
 
@@ -275,6 +362,12 @@ public class VersionModel : PageModel
         return latest is null
             ? Redirect("/")
             : RedirectToPage("/Forms/Details", new { formNumber });
+    }
+
+    public sealed record ColumnCsvAliasEditRow
+    {
+        public string Path { get; set; } = string.Empty;
+        public string? Alias { get; set; }
     }
 
     public sealed class ColumnTypeEditRow
