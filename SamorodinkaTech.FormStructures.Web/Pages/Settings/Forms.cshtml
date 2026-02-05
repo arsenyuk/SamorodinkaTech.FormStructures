@@ -25,6 +25,38 @@
     </div>
 }
 
+
+    <div class="card">
+        <div class="card-body">
+            <h2 class="h6">Create new form from CSV</h2>
+            <form method="post" enctype="multipart/form-data" asp-page-handler="Csv">
+                <div class="row g-2">
+                    <div class="col-md-3">
+                        <label class="form-label" for="CsvFormNumber">Form number (index)</label>
+                        <input class="form-control" asp-for="CsvFormNumber" />
+                        <span class="text-danger" asp-validation-for="CsvFormNumber"></span>
+                    </div>
+                    <div class="col-md-9">
+                        <label class="form-label" for="CsvFormTitle">Form title</label>
+                        <input class="form-control" asp-for="CsvFormTitle" />
+                        <span class="text-danger" asp-validation-for="CsvFormTitle"></span>
+                    </div>
+                </div>
+
+                <div class="mt-3">
+                    <label class="form-label" for="CsvUpload">CSV file (.csv)</label>
+                    <input class="form-control" type="file" asp-for="CsvUpload" accept=".csv,text/csv" />
+                    <div class="form-text">First non-empty row must contain column headers.</div>
+                    <div class="form-text">Supported separators: comma, semicolon, tab. Headers must be non-empty and unique.</div>
+                    <span class="text-danger" asp-validation-for="CsvUpload"></span>
+                </div>
+
+                <div class="text-danger mt-2" asp-validation-summary="All"></div>
+
+                <button class="btn btn-outline-primary" type="submit">Create & Analyze</button>
+            </form>
+        </div>
+    </div>
 <div class="card">
     <div class="card-body">
         <h2 class="h6">Upload empty template</h2>

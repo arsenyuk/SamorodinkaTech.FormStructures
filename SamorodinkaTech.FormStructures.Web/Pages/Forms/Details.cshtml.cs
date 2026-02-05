@@ -277,6 +277,7 @@ public class DetailsModel : PageModel
         }
     }
 
+
     private void LoadPageData()
     {
         Versions = _storage.ListVersions(FormNumber);
